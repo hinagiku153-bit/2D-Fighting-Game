@@ -1,0 +1,489 @@
+
+; 空中旋風脚
+
+[Statedef 6710]
+type    = A
+movetype= A
+physics = A
+juggle  = 5
+poweradd= 50
+ctrl = 0
+anim = 6710
+sprpriority = 2
+
+
+
+[State -2, push]
+type=playerpush
+trigger1 = AnimElem = 26, < 0
+value=0
+
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 6
+trigger3 = AnimElem = 11
+trigger4 = AnimElem = 16
+value = 216,0
+channel = 0
+
+
+
+
+[State 6400];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+y = -4
+
+
+
+
+[State -1, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 6
+trigger3 = AnimElem = 11
+trigger4 = AnimElem = 16
+getpower  = 30
+attr = A, NA
+damage = 30,15
+guardflag = HA
+guard.dist = 30
+priority = 7
+pausetime = 5,5
+sparkno = 1
+sparkxy = -10,-55
+hitsound   = s218,0
+guardsound = s6,0
+animtype = Med
+ground.type = High
+ground.slidetime = 17
+ground.hittime  = 30
+ground.velocity = 5
+air.velocity = 3,-4
+fall = 1
+fall.recover = 0 
+fall.damage = 0    
+
+
+
+;[State -1, コントロール可否]
+;type = CtrlSet
+;trigger1 = Time = 17
+;value = 1
+
+
+
+
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+
+
+
+;制空竜巻蹴り　　スタート
+
+
+[Statedef 6760]
+type    = A
+movetype= A
+physics = N
+juggle  = 0
+poweradd= 0
+ctrl = 0
+anim = 6760
+sprpriority = 2
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = AnimElem = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+
+[State 6760, 超必殺技発動の時間停止]
+type = SuperPause
+trigger1 = AnimElem = 2
+anim = 6760
+sound = 20, 0
+poweradd = -1000
+
+
+[State 6760];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+y = -7
+
+
+
+[State 6760];速度を与える
+type = VelSet
+trigger1 = AnimElem = 2
+x = -0
+y = -0
+
+
+
+
+[State 6760];速度を与える
+type = VelSet
+trigger1 = AnimElem = 3
+trigger2 = AnimElem = 8
+trigger3 = AnimElem = 13
+trigger4 = AnimElem = 18
+trigger5 = AnimElem = 23
+y = -3
+
+
+[State 6760];速度を与える
+type = VelSet
+trigger1 = AnimElem = 4
+trigger2 = AnimElem = 9
+trigger3 = AnimElem = 14
+trigger4 = AnimElem = 19
+trigger5 = AnimElem = 24
+y = -0
+
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 7
+trigger2 = AnimElem = 12
+trigger3 = AnimElem = 17
+trigger4 = AnimElem = 22
+value = 216,0
+channel = 0
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 7
+value = 244,0
+channel = 1
+
+
+
+
+[State 6760]
+type = turn
+trigger1 = AnimElem = 7
+trigger2 = P2Dist X < -20
+
+
+
+
+[State -1, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 3
+trigger2 = AnimElem = 8
+attr = A, NA
+damage = 0,0
+guardflag = HA
+guard.dist = 30
+priority = 7
+pausetime = 3,3
+sparkno = 1
+sparkxy = -10,-55
+hitsound   = s218,0
+guardsound = s6,0
+animtype = Med
+ground.type = High
+ground.slidetime = 17
+ground.hittime  = 17
+ground.velocity = -5,-6
+air.velocity = -3,-6
+fall = 1
+fall.recover = 0 
+fall.damage = 10    
+
+
+
+
+
+[State -1, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 13
+trigger2 = AnimElem = 18
+trigger3 = AnimElem = 23
+attr = A, NA
+damage = 0,0
+guardflag = HA
+guard.dist = 30
+priority = 7
+pausetime = 3,15
+sparkno = 1
+sparkxy = -10,-55
+hitsound   = s218,0
+guardsound = s6,0
+animtype = Med
+ground.type = High
+ground.slidetime = 17
+ground.hittime  = 17
+ground.velocity = -5
+air.velocity = -3,-4
+fall = 1
+fall.recover = 0 
+fall.damage = 10    
+
+
+
+[State 6760, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 6761
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+;制空竜巻蹴り　　攻撃
+
+[Statedef 6761]
+type    = A
+movetype= A
+physics = A
+juggle  = 0
+poweradd= 0
+ctrl = 0
+anim = 6761
+sprpriority = 2
+
+[State 6761];速度を与える
+type = VelSet
+trigger1 = AnimElem = 3
+y = -3
+x = 15
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 3
+value = 216,0
+channel = 2
+
+
+
+[State -1, ヒット定義]
+type = HitDef
+attr = A, NA
+trigger1 = AnimElem = 3
+damage = 230,110
+guardflag = HA
+priority = 7
+pausetime = 15,15
+sparkno = 1
+sparkxy = -10,-55
+hitsound   = s218,0
+guardsound = s6,0
+animtype = Med
+ground.type = High
+ground.slidetime = 17
+ground.hittime  = 17
+ground.velocity = -5
+air.velocity = -3,-4
+fall = 1
+fall.recover = 0 
+fall.damage = 10    
+absolute = 1
+
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+
+
+[Statedef 7999]
+type    = S
+movetype = A
+physics = S
+anim = 7999
+sprpriority = 2
+poweradd= 0
+velset = -13,0
+ctrl = 0
+
+
+
+[State 7999]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 8000
+ctrl = 0
+
+
+
+
+
+
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+;超稲妻弾
+
+[Statedef 8000]
+type    = S
+movetype = A
+physics = S
+anim = 8000
+sprpriority = 2
+poweradd= 0
+velset = 0,0
+ctrl = 0
+
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = AnimElem = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+[State 8000, 超必殺技発動の時間停止]
+type = SuperPause
+trigger1 = AnimElem = 9
+pos = 0, -57
+anim = 100
+sound = 20, 0
+poweradd = -1000
+
+
+
+
+
+[State -2];地面に立たせる
+type = PosSet
+trigger1 = animelem = 1
+y = 0
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 9
+value = 227,0
+channel = 0
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 10
+value = 230,0
+channel = 1
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 10
+hitflag = MAF
+ProjAnim = 8001
+Projremove = 0
+Projpriority = 1
+offset = 0,-50
+velocity = 9, 0
+attr = S, SP
+damage = 73,30
+animtype = Hard
+;;givepower = 0
+guardflag = MA
+pausetime = 0,13
+sparkno = -1 
+guard.sparkno = -1 
+hitsound = s220,0
+guardsound = s6,0
+ground.type = High
+ground.slidetime = 15
+ground.hittime = 25
+ground.velocity = -4,-7
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -4,-4
+projhits = 3
+fall = 1
+fall.recover = 0 
+;;;p2stateno = 1030
+guard.velocity = -15
+
+
+
+
+
+
+[State 8000]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

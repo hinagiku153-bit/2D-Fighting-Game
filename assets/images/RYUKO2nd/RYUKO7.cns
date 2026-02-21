@@ -1,0 +1,455 @@
+;竜子キック
+[Statedef 8040]
+type    = S
+movetype= A
+physics = S
+juggle  = 0
+velset = 5,0
+anim = 8040
+ctrl = 0
+sprpriority = 2
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = AnimElem = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+[State -2, 超必殺技発動の時間停止]
+type = SuperPause
+trigger1 = AnimElem = 2
+pos = 25, -57
+anim = 100
+sound = 20, 0
+poweradd = -1000
+
+
+
+[State -2]
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+
+[State -2]
+type = VelSet
+trigger1 = Animelem = 1
+x = 3
+
+
+[State -2]
+type = VelSet
+trigger1 = Animelem = 2
+x = 5
+
+
+
+
+
+[State -2, ヒット定義]
+type = HitDef
+trigger1 = time = 1
+attr = S, HA
+hitflag = MAF
+animtype  = up
+damage    = 0, 0
+getpower  = 0
+priority  = 5
+guardflag = MA
+pausetime = 0,8
+sparkno = 0
+sparkxy = 0,-110
+hitsound   = s217,0
+guardsound = s6,0
+ground.type = Low
+ground.slidetime = 30
+ground.hittime  = 30
+ground.velocity = -8,-8
+guard.velocity = -13
+air.velocity = -7,-8
+airguard.velocity = -4.5,-5
+fall.damage = 0          
+p2facing = 1             
+fall = 1
+fall.recover = 0  
+p2stateno = 1030
+
+
+
+
+
+[State -2, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 8041
+ctrl = 0
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+[Statedef 8041]
+type    = A
+movetype= A
+physics = S
+juggle  = 0
+velset = -0,-0
+anim = 8041
+ctrl = 0
+sprpriority = 2
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 242,0
+channel = 0
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 243,0
+channel = 1
+
+
+
+
+[state -2];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 1
+value = A
+
+[State -2];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 1,>= -7
+
+
+
+
+
+
+
+[State -2];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 2
+;;;x = 10
+y = -6
+
+
+[State -2];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 2
+trigger3 = AnimElem = 3
+trigger4 = AnimElem = 4
+trigger5 = AnimElem = 5
+trigger6 = AnimElem = 6
+trigger7 = AnimElem = 7
+trigger8 = AnimElem = 8
+trigger9 = AnimElem = 9
+
+x = -8
+;;;;y = -1
+
+
+
+[State -2, ヒット定義]
+type = HitDef
+trigger1 = time = 1
+attr = S, NA
+hitflag = MAF
+
+animtype  = up
+damage    = 0, 0
+getpower  = 0
+priority  = 5
+guardflag = MA
+pausetime = 0,8
+sparkno = 0
+sparkxy = 0,-110
+hitsound   = s217,0
+guardsound = s6,0
+ground.type = Low
+ground.slidetime = 30
+ground.hittime  = 30
+ground.velocity = -8,-8
+guard.velocity = -13
+air.velocity = -6,-8
+airguard.velocity = -4.5,-5
+fall.damage = 0          
+p2facing = 1             
+fall = 1
+fall.recover = 0  
+
+
+
+
+
+
+
+[State -2, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 8042
+ctrl = 0
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+[Statedef 8042]
+type    = A
+movetype= A
+physics = S
+juggle  = 5
+velset = 0,-0
+anim = 8042
+ctrl = 0
+sprpriority = 2
+
+
+
+
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+hitflag = MAF
+ProjAnim = 8045
+Projremove = 0
+Projpriority = 2
+offset = 0,-80
+velocity = 0, 0
+attr = S, SP
+projremovetime =14
+
+
+
+
+
+
+
+[state -2];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 1
+value = A
+
+[State -2];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 1,>= -7
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 231,0
+channel = 3
+
+
+
+[State -2];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 2
+trigger3 = AnimElem = 3
+trigger4 = AnimElem = 4
+trigger5 = AnimElem = 5
+trigger6 = AnimElem = 6
+trigger7 = AnimElem = 7
+trigger8 = AnimElem = 8
+trigger9 = AnimElem = 9
+trigger10 = AnimElem =10
+trigger11 = AnimElem = 11
+trigger12 = AnimElem = 12
+trigger13 = AnimElem = 13
+trigger14 = AnimElem = 14
+trigger15 = AnimElem = 15
+trigger16 = AnimElem = 16
+trigger17 = AnimElem = 17
+trigger18 = AnimElem = 18
+trigger19 = AnimElem = 19
+trigger20 = AnimElem = 20
+trigger21 = AnimElem = 21
+trigger22 = AnimElem = 22
+trigger23 = AnimElem = 23
+trigger24 = AnimElem = 24
+x = 20
+y = -2
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 257,0
+channel = 0
+
+
+
+[State -2, ヒット定義]
+type = HitDef
+trigger1 = time = 1
+attr = S, NA
+hitflag = MAF
+animtype  = up
+damage    = 230, 110
+getpower  = 0
+priority  = 5
+guardflag = MA
+pausetime = 0,8
+sparkno = 0
+sparkxy = 0,-110
+hitsound   = s225,0
+guardsound = s6,0
+ground.type = Low
+ground.slidetime = 0
+ground.hittime  = 30
+ground.velocity = -0,-10
+guard.velocity = -0
+air.velocity = -0,-7
+airguard.velocity = -0,-5
+fall.damage = 0          
+p2facing = 1             
+fall = 1
+fall.recover = 0  
+
+
+[State -2, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 8043
+ctrl = 0
+
+
+
+[State -2];着地stateに移行
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 10
+value = 52
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+[Statedef 8043]
+type    = A
+movetype= A
+physics = S
+juggle  = 0
+velset = 0,0
+anim = 8043
+ctrl = 0
+sprpriority = 2
+
+
+[State 8043, 軸位置移動]
+type = PosAdd
+trigger1 = AnimElem = 1
+x = -20
+y = 0
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+hitflag = MAF
+ProjAnim = 8045
+Projremove = 0
+Projpriority = 2
+offset = 0,-80
+velocity = 0, 0
+attr = S, SP
+projremovetime =14
+
+
+[state -2];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 1
+value = A
+
+
+
+
+[State -2];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 1,>= -7
+
+
+
+[State -2];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 2
+trigger3 = AnimElem = 3
+y = -5
+
+
+
+
+
+[State -2];速度を与える
+type = VelSet
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 2
+trigger3 = AnimElem = 3
+trigger4 = AnimElem = 4
+trigger5 = AnimElem = 5
+trigger6 = AnimElem = 6
+x = -4
+;y = -3
+
+
+
+
+
+[State -2];着地stateに移行
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 10
+value = 52
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+;---------------------------------------------------------------------------
+

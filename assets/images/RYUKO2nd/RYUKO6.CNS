@@ -1,0 +1,828 @@
+;雷落とし
+[Statedef 6460]
+type    = S
+movetype= A
+physics = S
+juggle  = 5
+velset = 0,0
+anim = 6460
+ctrl = 0
+sprpriority = 2
+
+
+[State 6460, 超必殺技発動の時間停止]
+type = SuperPause
+trigger1 = AnimElem = 2
+pos = 0, -57
+anim = 100
+sound = 20, 0
+poweradd = -3000
+
+
+
+[State 6460]
+type = VelSet
+trigger1 = Time = 0
+y = 0
+
+[State 6460]
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+
+[State 6460, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 4
+value = 244
+
+
+[state 6460];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 4
+value = A
+
+[State 6460];速度を与える
+type = VelSet
+trigger1 = AnimElem = 4
+y = -9
+
+
+[State 6460];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 4,>= -7
+
+
+
+
+
+[State 6460, ヒット定義]
+type = HitDef
+trigger1 = time = 0
+attr = S, A
+hitflag = MAF
+animtype  = Up       
+damage    = 50, 30
+getpower  = 0
+priority  = 5
+guardflag = MA
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+pausetime = 0,0
+sparkxy = 0,-110
+hitsound   = s225,0
+guardsound = 6,0
+ground.type = Low
+ground.slidetime = 30
+ground.hittime  = 30
+ground.velocity = -1.3,-7
+guard.velocity = -11
+air.velocity = -1.3,-7
+airguard.velocity = -4.5,-5
+;envshake.time = 25           ;ヒットした時に画面を揺らす時間
+;envshake.ampl = 7            ;ヒットした時の画面の振幅
+;envshake.freq = 176          ;ヒットした時に画面が揺れる速度
+p2facing = 1                 ;ヒットしたら相手がこちらを向きます
+fall = 1
+fall.recover = 0             ;ヒットした時に相手が空中受け身を取れるかどうか（0=取れない・1=取れる）
+absolute = 1
+
+
+
+[State 6460];着地stateに移行
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 10
+value = 6461
+
+
+
+
+
+;着地state
+[Statedef 6460]
+type = S
+movetype = I
+physics = S
+anim = 6461
+ctrl = 0
+velset = 0,0
+sprpriority = 2
+
+
+
+
+
+[State 6460];地面に立たせる
+type = PosSet
+trigger1 = time = 0
+y = 0
+
+
+
+
+
+[State 6460, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+
+
+;雷落とし発射
+
+
+
+
+[Statedef 6461]
+type    = S
+movetype = A
+physics = S
+anim = 6461
+sprpriority = 2
+poweradd= 30
+velset = 0,0
+ctrl = 0
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 258, 0
+channel = 2
+
+
+
+
+[State 6461]
+type = VelSet
+trigger1 = Time = 0
+y = 0
+
+
+
+
+[State 6461]
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+[State 6461, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 230
+
+
+
+[State 0]
+type = ChangeAnim
+trigger1 = Anim != 6461 && var(10) = 0
+value = 6461
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+hitflag = MAFD
+guardflag = MA 
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = 6, 0
+attr = S, SP
+damage = 5,3
+animtype = Hard
+getpower = 0
+givepower = 0
+hitsound   = -1
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 5
+ground.velocity = -0,-5
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-5
+projhits = 5
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+projremovetime =250
+absolute = 1
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+guardflag = MA 
+hitflag = MAFD
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = -6, 0
+attr = S, SP
+damage = 5,3
+animtype = Hard
+getpower = 0
+givepower = 0
+projremovetime =250
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+hitsound   = -1
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 5
+ground.velocity = -5
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-5
+projhits = 5
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+absolute = 1
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+guard.dist = 50
+hitflag = MAFD
+guardflag = MA 
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = 4,0
+attr = S, SP
+damage = 25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+hitsound   = -1
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 5
+ground.velocity = -7
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-7
+projhits = 1
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+projremovetime =250
+absolute = 1
+
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+guardflag = MA 
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+hitflag = MAFD
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = -4,0
+attr = S, SP
+damage = 25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+projremovetime =250
+hitsound   = -1
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 5
+ground.velocity = -0,-7
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-7
+projhits = 1
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+absolute = 1
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+projremovetime =250
+hitflag = MAFD
+guardflag = MA 
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = 2,0
+attr = S, SP
+damage = 25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+hitsound   = -1
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 0
+ground.hittime = 5
+ground.velocity = -0,-7
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-7
+projhits = 1
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+absolute = 1
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+guardflag = MA 
+projremovetime =250
+hitflag = MAFD
+ProjAnim = 6462
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = -2,0
+attr = S, SP
+damage = 25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+guardsound = -1
+sparkno = -0
+sparkxy = -0
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 0
+ground.hittime = 5
+ground.velocity = -0,-7
+airguard.velocity = -0,-0
+air.type = Low
+air.velocity = -0,-7
+projhits = 1
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 25
+absolute = 1
+
+
+
+
+
+
+
+[State 6461]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 6570
+ctrl = 0
+
+
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\;
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\;
+;激震2222222222222222222222222
+[Statedef 6570]
+type    = S
+movetype = A
+physics = S
+anim = 6570
+sprpriority = 2
+poweradd= 30
+velset = 0,0
+ctrl = 0
+
+
+
+
+
+[State -2]
+type = VelSet
+trigger1 = Time = 0
+y = 0
+
+
+
+
+[State -2]
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 259
+channel = 1
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 223
+channel = 0
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 7
+trigger3 = AnimElem = 8
+trigger4 = AnimElem = 9
+trigger5 = AnimElem = 10
+trigger6 = AnimElem = 11
+hitflag = MAFD
+guardflag = MA 
+ProjAnim = 6540
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = 3, 0
+attr = S, SP
+damage = 25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+pausetime = 0,20
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 15
+ground.velocity = -0.-10
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -0,-10
+projhits = 1
+fall = 1
+fall.recover = 0             ;ヒットした時に相手が空中受け身を取れるかどうか（0=取れない・1=取れる）
+fall.damage = 70             ;ヒット後、相手が地面に着地した時のダメージ
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 7
+trigger3 = AnimElem = 8
+trigger4 = AnimElem = 9
+guardflag = MA 
+hitflag = MAFD
+ProjAnim = 6540
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = -3, 0
+attr = S, SP
+damage =  25,15
+animtype = Hard
+getpower = 0
+givepower = 0
+guard.dist = 80 ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+pausetime = 0,20
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 15
+ground.velocity = -0.-10
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -0,-10
+projhits = 30
+fall = 1
+fall.recover = 0             ;ヒットした時に相手が空中受け身を取れるかどうか（0=取れない・1=取れる）
+fall.damage = 70             ;ヒット後、相手が地面に着地した時のダメージ
+absolute = 1
+
+
+[State 6461, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 6701
+ctrl = 0
+
+
+
+
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+
+
+
+
+;爆裂
+[Statedef 6701] 
+type     = S                     ;キャラの状態を指定（S=立ち・C=しゃがみ・A=空中・L=横に倒れている・U=前のステートの状態を引き継ぐ）
+movetype = A                     ;キャラの行動内容を指定（I=何もしない・A=攻撃している・H=攻撃を食らっている）
+physics  = S                     ;キャラの物理的な体勢（S=立ち・C=しゃがみ・A=空中・N=重力や摩擦の影響を受けない・U=前のステートの体勢を引き継ぐ）
+juggle   = 5                     ;攻撃を当てた時に溜まるジャグルポイントの設定
+velset   = 0,0                   ;移動初速度の設定（このステートでは0,0なので移動せず止まります）
+ctrl     = 0                     ;コントロールの可否（0=キー操作不可・1=キー操作可能）
+anim     = 6701                   ;airファイルの[Begin Action 200]のアニメを使っています
+poweradd = 100                    ;パワーゲージの増加量を設定
+sprpriority = 2                  ;画像表示優先度　数値が多いと手前に、少ないと奥に優先されます
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 3
+value = 260, 0
+channel = 1
+
+
+
+
+
+
+
+[State -2]
+type = Helper
+trigger1 = AnimElem = 6
+ID = 8510
+stateno = 8510
+name = "8510"
+sprpriority = 2
+pos = 0,-100
+postype = P1
+facing = 1  
+helpertype = normal
+keyctrl = 0
+ownpal = 1
+
+
+
+
+
+
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 6
+hitflag = MAFD
+guardflag = MA 
+ProjAnim = 6700
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = 0, 0
+attr = S, SP
+damage = 80,50
+animtype = Hard
+getpower = 0
+givepower = 0
+projremovetime =53
+guard.dist = 80
+hitsound   = s218,0
+guardsound = 6,0
+sparkno = 3
+sparkxy = 0,-110
+pausetime = 0,0
+ground.type = High
+ground.slidetime = 0
+ground.hittime = 0
+ground.velocity = -0,-10
+airguard.velocity = 0,-0
+air.type = Low
+air.velocity = -0,-10
+projhits = 1
+p2facing = 1 
+fall = 1
+fall.recover = 0
+fall.damage = 30
+absolute = 1
+;;;;p2stateno = 1025
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = s279, 0
+channel = 2
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = s223, 0
+channel = 0
+
+
+
+[State -1, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 6600
+ctrl = 0 
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;爆発エフェクト
+
+
+[Statedef 8510]
+type     = A
+movetype = A
+physics  = N
+poweradd = 0
+ctrl     = 0
+velset   = 0,0
+anim     = 8510
+sprpriority = 3
+
+
+
+
+;;;;;;影無くす
+[State -2]
+Type = AssertSpecial
+Trigger1       = 1
+Flag           = Noshadow
+IgnoreHitPause = 1
+SuperMoveTime  = 9999
+PauseMoveTime  = 9999
+
+
+
+
+
+
+
+;;;;;透過する？
+[State -2]
+Type     = Trans
+Trigger1 = 1
+Trans    = Add
+
+
+
+
+;回転;;;;;;;;;;;;;
+
+[State -2]
+type=angleset
+trigger1=!time&&!prevstateno
+value=3
+ignorehitpause=1
+
+[State -2]
+type=angleadd
+trigger1 = 1
+value=ifelse(numtarget, -1, -5)
+ignorehitpause=1
+
+[State -2]
+type=angledraw
+trigger1=1
+scale=1,1
+ignorehitpause=1
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;ヘルパー発生する時の拡大率
+[State -2]
+Type     = VarSet
+Trigger1 = Time = 1
+FV       = 0
+Value    = 0.1
+
+;;;;ヘルパー(拡大速度？)
+[State -2]
+Type     = VarAdd
+Trigger1 = 1
+FV       = 0
+Value    = 0.06
+
+;;;;;拡大設定？
+[State -2]
+Type     = AngleDraw
+Trigger1 = 1
+Scale    = FVar(0),FVar(0)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+[State -2]
+type = DestroySelf
+trigger1 = Time = 50
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,650 @@
+;---------------------------------------------------------------------------
+
+;---------------------------------------------------------------------------
+; 勝利デモ
+
+[Statedef 6650]
+type = S
+anim = 6020
+ctrl = 0
+
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 1
+value = 249, 0
+channel =1 
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 1
+value = 250, 0
+channel =2 
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 1
+value = 250, 0
+channel =5 
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 1
+value = 250, 0
+channel =6 
+
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 100
+value = 225, 0
+channel =3 
+
+[State -1]
+type = PlaySnd
+trigger1 = time = 100
+value = 251, 0
+channel =4 
+
+
+
+[State -1]
+type = AssertSpecial;;;;カット表示時間
+trigger1 = Time = [0,500]
+flag = RoundNotOver
+
+[State -1] 
+type = AssertSpecial
+trigger1 = 1
+flag = nomusic
+
+[State -1] 
+type = AssertSpecial
+trigger1 = 1
+flag = nobardisplay
+
+[State -2]
+type = Explod
+trigger1 = Time = 1
+anim = 6650
+pos = 0,0
+postype = left
+;postype = back
+sprpriority = 2
+supermove = 1
+bindtime = 1
+ownpal = 1
+ontop = 1
+
+
+[State -2]
+type = Explod
+trigger1 = Time = 130
+anim = 6651
+pos = 0,0
+postype = left
+;postype = back
+sprpriority = 2
+supermove = 1
+bindtime = 1
+ownpal = 1
+ontop = 1
+
+
+[State -2]
+type = Explod
+trigger1 = Time = 200
+anim = 6652
+pos = 0,0
+postype = left
+;postype = back
+sprpriority = 2
+supermove = 1
+bindtime = 1
+ownpal = 1
+ontop = 1
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+
+;稲妻弾
+
+[Statedef 6041]
+type    = S
+movetype = I
+physics = S
+anim = 6041
+sprpriority = 2
+poweradd= 30
+velset = 0,0
+ctrl = 0
+
+
+
+[State -2];地面に立たせる
+type = PosSet
+trigger1 = animelem = 1
+y = 0
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 226,0
+channel = 0
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 7
+value = 273,0
+channel = 1
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 14
+value = 275,0
+channel = 1
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 14
+hitflag = MAF
+ProjAnim = 6045
+;;;Projhitanim = 6750
+Projid = 0000
+Projremove = 0
+Projpriority = 1
+offset = 40,-70
+velocity = 1, 0
+attr = S, SP
+damage = 70,35
+animtype = Hard
+givepower = 10
+guardflag = MA
+pausetime = 50,0
+sparkno = -1 
+guard.sparkno = -1 
+hitsound = s219,0
+guardsound = s6,0
+ground.type = High
+ground.slidetime = 15
+ground.hittime = 25
+ground.velocity = -3,-5
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -3,-5
+projhits = 5
+fall = 1
+fall.recover = 1    
+fall.damage = 0
+projremovetime = 150
+fall.recovertime=80
+
+
+
+[State -2]
+type = Helper
+trigger1 = AnimElem = 6
+ID = 6042
+stateno = 6042
+name = "6042"
+sprpriority = 2
+pos = 40,-70
+postype = P1
+facing = 1  
+helpertype = normal
+keyctrl = 0
+ownpal = 1
+
+
+
+
+
+
+[State -2]
+type = Helper
+trigger1 = AnimElem = 7
+ID = 6043
+stateno = 6043
+name = "6043"
+sprpriority = 2
+pos = 40,-70
+postype = P1
+facing = 1  
+helpertype = normal
+keyctrl = 0
+ownpal = 1
+
+
+
+
+
+
+[State -2]
+type = Helper
+trigger1 = AnimElem = 14
+ID = 6044
+stateno = 6044
+name = "6044"
+sprpriority = 2
+pos = 60,-60
+postype = P1
+facing = 1  
+helpertype = normal
+keyctrl = 0
+ownpal = 1
+
+
+
+
+
+[State -2]
+type = Helper
+trigger1 = AnimElem = 7
+ID = 6045
+stateno = 6045
+name = "6045"
+sprpriority = 2
+pos = 40,-60
+postype = P1
+facing = 1  
+helpertype = normal
+keyctrl = 0
+ownpal = 1
+
+
+
+
+
+
+
+
+[State -2]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;スパーク1
+
+
+[Statedef 6042]
+type     = A
+movetype = A
+physics  = N
+poweradd = 0
+ctrl     = 0
+velset   = 0,0
+anim     = 6047
+sprpriority = 2
+
+
+
+
+;;;;;;影無くす
+[State -2]
+Type = AssertSpecial
+Trigger1       = 1
+Flag           = Noshadow
+IgnoreHitPause = 1
+SuperMoveTime  = 9999
+PauseMoveTime  = 9999
+
+
+
+
+
+;;;;;透過する？
+[State -2]
+Type     = Trans
+Trigger1 = 1
+Trans    = Add
+
+
+
+;回転;;;;;;;;;;;;;
+
+[State -2]
+type=angleset
+trigger1=!time&&!prevstateno
+value=3
+ignorehitpause=1
+
+[State -2]
+type=angleadd
+trigger1 = 1
+value=ifelse(numtarget, -1, -5)
+ignorehitpause=1
+
+[State -2]
+type=angledraw
+trigger1=1
+scale=1,1
+ignorehitpause=1
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;ヘルパー発生する時の拡大率
+[State -2]
+Type     = VarSet
+Trigger1 = Time = 1
+FV       = 0
+Value    = 0.5
+
+;;;;ヘルパー(拡大速度？)
+[State -2]
+Type     = VarAdd
+Trigger1 = 1
+FV       = 0
+Value    = 0.00
+
+;;;;;拡大設定？
+[State -2]
+Type     = AngleDraw
+Trigger1 = 1
+Scale    = FVar(0),FVar(0)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+
+
+
+
+
+[State -2]
+type = DestroySelf
+trigger1 = Time = 30
+;;trigger1 = numProjID(0000) = 1
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;スパーク1
+
+
+[Statedef 6043]
+type     = A
+movetype = A
+physics  = N
+poweradd = 0
+ctrl     = 0
+velset   = 0,0
+anim     = 6043
+sprpriority = 2
+
+
+
+
+;;;;;;影無くす
+[State -2]
+Type = AssertSpecial
+Trigger1       = 1
+Flag           = Noshadow
+IgnoreHitPause = 1
+SuperMoveTime  = 9999
+PauseMoveTime  = 9999
+
+
+
+
+[State -2]
+type = DestroySelf
+trigger1 = Time = 30
+;;;;trigger1 = numProjID(0000) = 1
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;衝撃波
+
+
+[Statedef 6044]
+type     = A
+movetype = A
+physics  = N
+poweradd = 0
+ctrl     = 0
+velset   = 0,0
+anim     = 6044
+sprpriority = 2
+
+
+
+
+;;;;;;影無くす
+[State -2]
+Type = AssertSpecial
+Trigger1       = 1
+Flag           = Noshadow
+IgnoreHitPause = 1
+SuperMoveTime  = 9999
+PauseMoveTime  = 9999
+
+
+
+
+;;;;;透過する？
+[State -2]
+Type     = Trans
+Trigger1 = 1
+Trans    = Add
+
+
+
+;回転;;;;;;;;;;;;;
+
+[State -2]
+type=angleset
+trigger1=!time&&!prevstateno
+value=3
+ignorehitpause=1
+
+[State -2]
+type=angleadd
+trigger1 = 1
+value=ifelse(numtarget, -1, -5)
+ignorehitpause=1
+
+[State -2]
+type=angledraw
+trigger1=1
+scale=1,1
+ignorehitpause=1
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;ヘルパー発生する時の拡大率
+[State -2]
+Type     = VarSet
+Trigger1 = Time = 1
+FV       = 0
+Value    = 0.1
+
+;;;;ヘルパー(拡大速度？)
+[State -2]
+Type     = VarAdd
+Trigger1 = 1
+FV       = 0
+Value    = 0.06
+
+;;;;;拡大設定？
+[State -2]
+Type     = AngleDraw
+Trigger1 = 1
+Scale    = FVar(0),FVar(0)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+[State -2]
+type = DestroySelf
+trigger1 = Time = 40
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;スパーク2
+
+
+[Statedef 6045]
+type     = A
+movetype = A
+physics  = N
+poweradd = 0
+ctrl     = 0
+velset   = 0,0
+anim     = 6046
+sprpriority = 2
+
+
+
+
+;;;;;;影無くす
+[State -2]
+Type = AssertSpecial
+Trigger1       = 1
+Flag           = Noshadow
+IgnoreHitPause = 1
+SuperMoveTime  = 9999
+PauseMoveTime  = 9999
+
+
+
+
+
+
+
+;;;;;透過する？
+[State -2]
+Type     = Trans
+Trigger1 = 1
+Trans    = Add
+
+
+
+;回転;;;;;;;;;;;;;
+
+[State -2]
+type=angleset
+trigger1=!time&&!prevstateno
+value=1
+ignorehitpause=1
+
+[State -2]
+type=angleadd
+trigger1 = 1
+value=ifelse(numtarget, -1, -5)
+ignorehitpause=1
+
+[State -2]
+type=angledraw
+trigger1=1
+scale=1,1
+ignorehitpause=1
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;ヘルパー発生する時の拡大率
+[State -2]
+Type     = VarSet
+Trigger1 = Time = 1
+FV       = 0
+Value    = 1.0
+
+;;;;ヘルパー(拡大速度？)
+[State -2]
+Type     = VarAdd
+Trigger1 = 1
+FV       = 0
+Value    = -0.04
+
+;;;;;拡大設定？
+[State -2]
+Type     = AngleDraw
+Trigger1 = 1
+Scale    = FVar(0),FVar(0)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+[State -2]
+type = DestroySelf
+trigger1 = Time = 20
+;;trigger1 = numProjID(0000) = 1
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+

@@ -1,0 +1,785 @@
+;------------------------------------------------------------------------------------------------------------
+;竜子投げ大爆発
+[Statedef 7200]
+type    = S
+movetype= A
+physics = S
+juggle  = 5
+poweradd = 0
+velset = 0,0
+ctrl = 0
+anim = 7200
+sprpriority = 2
+
+
+[State 7200];地面に立たせる
+type = PosSet
+trigger1 = time = 0
+y = 0
+
+[State 7200, ヒット定義]
+type = HitDef
+Trigger1 = Time = 0
+attr = S, NT          
+hitflag = MAF          
+priority = 1, Miss    
+sparkno = -1          
+sprpriority = -2       
+p1facing = 1             
+p2facing = 1    
+p1stateno = 7400
+p2stateno = 8322      
+guard.dist = 0        
+fall = 1       
+
+
+
+
+[State 7200,声]
+type = PlaySnd
+trigger1 = AnimElem = 2
+value = 215
+
+
+[State 7200, ステート変更]
+type = ChangeState
+Trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+;成功モーション-------------------------------------------------------------------------------------
+[Statedef 7400]
+type    = A
+movetype= A
+physics = N
+anim = 7400
+poweradd = 0
+
+
+[State 7400];地面に立たせる
+type = PosSet
+trigger1 = animelem = 1
+y = 0
+
+
+
+[State 7400, 移動]
+type = VelSet
+trigger1 = Animelem = 7
+x = 1.5
+y = -15.5
+
+
+
+
+
+
+[State 7400, 重力]
+type = veladd
+trigger1 = Animelem = 7,>= 0
+x = 0.0
+y = 0.7
+
+
+[State 7400,声]
+type = PlaySnd
+trigger1 = AnimElem = 7
+value = 268
+time = 20
+
+
+[State 7400, 位置１]
+type = TargetBind
+trigger1 = animelem = 1
+pos = 50, -50
+time = 20
+
+
+
+
+
+[State 7400, 位置2]
+type = TargetBind
+trigger1 = animelem = 2
+pos = 30, -50
+time = 20
+
+
+
+
+[State 7400, 位置3]
+type = TargetBind
+trigger1 = animelem = 3
+pos = 0, -50
+time = 20
+
+
+
+
+[State 7400, 位置4]
+type = TargetBind
+trigger1 = animelem = 4
+pos = 0, -50
+time = 20
+
+
+
+
+
+[State 7400, 位置5]
+type = TargetBind
+trigger1 = animelem = 5
+pos = 0, -50
+time = 20
+
+
+
+
+
+[State 7400, 位置6]
+type = TargetBind
+trigger1 = animelem = 6
+pos = 0, -50
+time = 20
+
+
+
+
+
+
+
+
+[State 7400, 位置7]
+type = TargetBind
+trigger1 = animelem = 7
+pos = 0, -120
+
+time = 50
+
+
+
+
+
+[State 7400, ステート変更]
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 0
+value = 7600
+ctrl = 0
+
+
+
+
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+[Statedef 7600]
+type = S
+movetype = I
+physics  = N   
+juggle   = 0    
+velset   = 0,0     
+ctrl     = 0
+anim     = 7600
+sprpriority = -2
+
+[State 7600, 軸位置設定] 
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+[State 7600,声]
+type = PlaySnd
+trigger1 = AnimElem = 2
+value = 225
+
+
+[State 7600,声]
+type = PlaySnd
+trigger1 = AnimElem = 2
+value = 223
+channel = 1
+
+
+
+
+
+[State 7600, エフェクト]
+type = explod
+trigger1 = animelem = 2
+anim = 6700
+scale =1,1
+pos = 60,0
+sprpriority = 5
+removeongethit = 1
+ownpal = 1
+
+
+[State 7600, 振動]
+type = EnvShake
+trigger1 = animelem = 2
+time = 20
+freq = 60
+ampl = -6
+phase = 90
+
+[State 7600, 位置1]
+type = TargetBind
+trigger1 = animelem = 1
+pos = 0, -0
+
+
+
+
+[State 7600, 相手のステート変更]
+type = TargetState
+trigger1 = animelem = 1
+value = 8328
+
+
+
+
+
+
+[State 7600, 体力の増減]
+type = TargetLifeAdd
+trigger1 = AnimElem = 1
+value = -150
+
+
+
+
+
+
+
+
+
+[State 7600, 移動]
+type = VelSet
+trigger1 = animelem = 7
+x = -2.0
+y =-9
+
+
+
+
+
+[State 7600, 重力]
+type = veladd
+trigger1 = Animelem = 7,>= 0
+x = 0.0
+y = 0.7
+
+
+
+
+[State 7600, ステート変更]
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 0 
+value = 52
+ctrl = 1
+
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;相手の投げられ1
+
+
+[Statedef 8322]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+
+
+[State 8322, 移動]
+type = VelSet
+trigger1 = Animelem = 7
+x = -1.5
+y = -15
+
+
+
+[State 8322, 重力]
+type = veladd
+trigger1 = Animelem = 7,>= 0
+x = 0.0
+y = 0.7
+
+
+
+
+
+[State 8322, 相手のアニメ変更]
+type = ChangeAnim2
+Trigger1 = Time = 0
+value = 5100
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;相手の投げられ2
+
+[Statedef 8328]
+type    = A
+movetype= H
+physics = N
+velset = -2,-10.0
+poweradd = 0
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+
+[State 8328, 速度加算] 
+type = VelAdd
+Trigger1 = 1
+y = 0.6
+
+[State 8328, 相手のステートに戻す]
+type = SelfState
+trigger1 = Vel Y > 0
+trigger1 = Pos Y >= 0
+value = 5100 
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+[Statedef 7601]
+type = S
+movetype = I
+physics  = N   
+juggle   = 0    
+velset   = 0,0     
+ctrl     = 0
+anim     = 7601
+sprpriority = 2
+
+
+
+
+[State -2]
+type = NotHitBy
+trigger1 = 1
+value = SCA, NT, ST, HT
+time=15
+
+
+
+
+[state -2];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 1
+value = A
+
+
+
+[State -2];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 1,>= -7
+
+
+
+[State -2 ]
+type = VelSet
+trigger1 = Animelem = 1
+x =-16
+y =-6
+
+
+[State -2];着地stateに移行
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 10
+value = 7602
+ctrl = 0
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+[Statedef 7602]
+type = S
+movetype= A
+physics = S
+juggle = 5
+velset = 0,0
+ctrl = 0
+anim = 7602
+poweradd = 0
+
+
+
+
+[State -2];地面に立たせる
+type = PosSet
+trigger1 = time = 0
+y = 0
+
+
+ [state -1]
+type = ChangeState
+trigger1 = Animtime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+
+
+
+
+
+
+
+;雷撃
+
+
+[Statedef 7800]
+type = S
+movetype= A
+physics = S
+juggle = 1
+velset = 0,0
+ctrl = 0
+anim = 7800
+poweradd = 100
+
+[State 7600,声]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 242
+
+[State -2];地面に立たせる
+type = PosSet
+trigger1 = animelem = 1
+y = 0
+
+
+
+ [state -1]
+type = ChangeState
+trigger1 = Animtime = 0
+value = 7801
+ctrl = 0
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;空中
+
+[Statedef 7801]
+type = S
+movetype= A
+physics = S
+juggle = 5
+velset = 0,0
+ctrl = 0
+anim = 7801
+poweradd = 0
+
+
+
+[state -2];属性変更
+type = StatetypeSet
+trigger1 = Animelem = 1
+value = A
+
+
+
+[State -2];空中になるので、重力を与える
+type = gravity
+trigger1 = Animelem = 1,>= -7
+
+
+[State -2 ]
+type = VelSet
+trigger1 = Animelem = 1
+trigger2 = Animelem = 2
+x =10
+y =-6
+
+[State -2 ]
+type = VelSet
+trigger1 = Animelem = 3
+trigger2 = Animelem = 4
+trigger3 = Animelem = 5
+x =3
+y =-0
+
+
+
+[State -2 ]
+type = VelSet
+trigger1 = Animelem = 6
+x =3
+y =3
+
+
+[State -2];着地stateに移行
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 10
+value = 7802
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;着地攻撃
+
+[Statedef 7802]
+type = S
+movetype= A
+physics = S
+juggle = 5
+velset = 0,0
+ctrl = 0
+anim = 7802
+poweradd = 0
+
+
+
+
+[State 7802];地面に立たせる
+type = PosSet
+trigger1 = time = 0
+y = 0
+
+
+
+[State -2,声]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 219
+
+
+[State -1, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 1
+attr = S, NA
+damage    = 70,35
+animtype  = up
+hitflag = MAFD
+guardflag = HA
+pausetime = 0,3
+;;;sparkno = 3
+;;;sparkxy = -10,-55
+hitsound   = s219,0
+guardsound = 6,0
+ground.type = Low
+ground.slidetime = 10
+ground.hittime  = 10
+ground.velocity = -2,-6
+air.velocity = -2,-8
+fall = 1
+fall.recover = 0 
+guard.dist = 30
+guard.time  = 15
+guard.slidetime = 10
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 1
+
+;;;hitflag = MAFD
+ProjAnim = 8046
+Projremove = 1
+Projpriority = 2
+offset = 0,-0
+velocity = 0, 0
+attr = S, SP
+damage = 0,0
+guard.dist = 50 
+animtype = Hard
+givepower = 0
+guardflag = MA
+pausetime = 0,3
+sparkno = -1 
+guard.sparkno = -1 
+hitsound = s220,0
+guardsound = 6,0
+ground.type = High
+ground.slidetime = 15
+ground.hittime = 25
+ground.velocity = -5
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -2.5,-2
+projhits = 1
+projremovetime =10
+
+
+
+
+
+
+
+
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 1
+trigger2 = AnimElem = 1
+
+hitflag = MAFD
+ProjAnim = 8047
+Projpriority = 3
+offset = 0,-0
+velocity = 0, 0
+attr = S, SP
+;;;damage = 100,10
+guard.dist = 50 
+animtype = Hard
+givepower = 0
+guardflag = MA
+pausetime = 0,3
+sparkno = -1 
+guard.sparkno = -1 
+;;hitsound = s220,0
+guardsound = 6,0
+ground.type = High
+ground.slidetime = 15
+ground.hittime = 25
+ground.velocity = -5
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -2.5,-2
+projhits = 1
+projremovetime =17
+sparkno = 0
+
+
+
+
+
+ [state -1]
+type = ChangeState
+trigger1 = Animtime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;空中ダッシュ
+[Statedef 7900]
+type    = A
+movetype= I
+physics = a
+juggle  = 0
+poweradd= 0
+ctrl = 1
+velset = 4,-6;;;;8,-4
+anim = 7900
+sprpriority = 2
+
+
+[State 7900,声]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 243
+
+
+[State 7900];重力
+type = VelAdd
+Trigger1 = 1
+y = .4
+x = 0.4;;;;5
+
+
+
+ [state -1]
+type = ChangeState
+trigger1 = Vel Y > 0 && Pos Y >= 0
+value = 106
+ctrl = 0
+
+

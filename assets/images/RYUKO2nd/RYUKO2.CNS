@@ -1,0 +1,868 @@
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;アニメパンチ
+
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+[Statedef 6470]
+type    = S
+movetype= A
+physics = N
+juggle  = 0
+velset = 0,0
+anim = 6470
+ctrl = 0
+sprpriority = 2
+
+
+[State 6470, 超必殺技発動の時間停止]
+type = SuperPause
+trigger1 = AnimElem = 9
+pos = 25, -57
+anim = 100
+sound = 20, 0
+poweradd = -2000
+
+
+
+
+
+[State -2, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 10
+value = 277,0
+channel = 0
+
+
+
+[State 6470, 残像]
+type = AfterImage
+trigger1 = AnimElem = 10
+time = 21
+
+
+
+[State 6470, 残像表示時間]
+type = AfterImageTime
+trigger1 = AnimElemTime(10) >= 0
+time = 14
+
+
+
+[State 6470, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 12
+x = 0
+
+
+[State 6470, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 10
+x = 5
+
+
+
+
+
+[State 6470, ヒット定義（投げ用）]
+type = HitDef
+Trigger1 = Time = 0
+attr = S, NT          ;攻撃属性: これは Standing, Normal Throw（立ち通常投げ）
+hitflag = MAF         
+priority = 1, Miss    ;投げなので優先度を低く、かつmissかdodgeの属性でなければなりません
+sparkno = -1          ;-1にすればヒットスパークが表示しなくなります
+sprpriority = 1       ;攻撃が当たった時に画像表示優先度を1に出来ます
+;p1facing = ifelse(command = "holdfwd", -1, 1) ;攻撃が当たった時の自分の向き ★６
+;p2facing = 1          ;攻撃が当たった時の相手の向き
+p1stateno = 6471       ;自分のステート変更
+p2stateno = 7000       ;相手を制御するステートに行かせる
+guardflag = MA
+guard.dist = 0        ;相手がガード状態に移行出来る距離（現在は0なのでガード不可）
+fall = 1              ;1にすれば相手がダウン状態になる
+
+
+
+[State 6470, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+;------------------------------------
+;------------------------------------
+;------------------------------------
+;------------------------------------
+; 投げ成功モーション
+; CNS レベル: 中級
+
+
+
+[Statedef 6471]
+type    = S
+movetype= A
+physics = N
+anim = 6471
+poweradd = 100
+sprpriority = 2
+ctrl = 0
+
+
+
+
+[State -2]
+type = PosSet
+trigger1 = Time = 0
+y = 0
+
+
+
+
+[State -2, Stop Music]
+type = AssertSpecial
+trigger1 = 1
+flag = nomusic
+
+
+
+
+[State 6471, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 1
+x = 0
+
+
+
+
+[State 6471]
+type = SuperPause
+trigger1 = Time = 40
+time = 140
+movetime = 140
+anim = -1
+pos =0, 0
+sound = -1
+poweradd = -0
+
+
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+anim = 6472
+trigger1 = AnimElem = 3
+value = 251,0
+channel = 0
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+anim = 6472
+trigger1 = AnimElem = 4
+value = 240,0
+channel = 1
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+anim = 6472
+trigger1 = AnimElem = 4
+value = 240,0
+channel = 2
+
+
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 7
+value = 225,0
+channel = 1
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 218,0
+channel = 2
+
+[State 6471, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 248,0
+channel = 3
+
+
+[State 6471, 掴んだ音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 1, 1
+
+
+[State 6471, 掴んだ相手の位置１]
+type = TargetBind
+trigger1 = AnimElemTime(2) < 0
+pos = 15, 0
+time = 140
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+;カット
+[State 6471]
+
+type = Explod
+trigger1 = AnimElem = 3
+ctrl = 0
+anim = 6472
+pos = 0,0
+postype = back
+sprpriority = 4
+supermove = 1
+bindtime = 1
+ownpal = 1
+ontop = 1
+
+
+
+;\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+[State 6471, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+[State 6741, 掴んだ相手の体力ゲージの増減]
+type = TargetLifeAdd
+trigger1 = AnimElem = 4
+absolute = 1
+value = -350
+
+
+
+[State 6471, 掴んだ相手のステート変更]
+type = TargetState
+trigger1 = AnimElem = 5
+value = 7001
+
+
+
+;--------------------------------
+; 相手側の投げられモーション１
+;
+
+[Statedef 7000]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+
+[State -2]
+type = NotHitBy
+trigger1 = 1
+value = SCA, NT, ST, HT
+time=-1
+
+
+
+
+[State 7000, 制御した相手のアニメ変更]
+type = ChangeAnim2
+Trigger1 = Time = 0
+value = 5051
+
+
+
+
+
+;--------------------------------
+;--------------------------------
+; 相手側の投げられモーション１
+
+[Statedef 7000]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+
+
+
+
+[State 7000, 制御した相手のアニメ変更]
+type = ChangeAnim2
+Trigger1 = Time = 0
+value = 5051
+
+
+
+
+
+;-----;--------------------------------
+;---------------------------
+; 相手側の投げられモーション２
+
+[Statedef 7001]
+type    = A
+movetype= H
+physics = N
+velset = 1,-20
+poweradd = 40
+
+
+
+
+
+
+
+[State 7001, 速度加算] ;重力
+type = VelAdd
+Trigger1 = 1
+y = .4
+
+
+[State 7001, 制御解除して相手のステートに戻す]
+type = SelfState
+trigger1 = Vel Y > 0
+trigger1 = Pos Y >= 0
+value = 5100 ;common1.cns参照
+
+
+
+
+
+;--------------------;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+;---------------------------------------------------------------------------
+
+
+
+
+
+;突き手
+
+[Statedef 1020]
+type    = S
+movetype= A
+physics = N
+juggle  = 5
+poweradd= 150
+velset = 0,0
+anim = 1020
+ctrl = 0
+sprpriority = 2
+
+
+
+
+[State -2, push]
+type=playerpush
+trigger1 = AnimElem = 6, < 0
+value=0
+
+
+
+
+
+
+
+[State 1020, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 243, 0
+channel = 4
+
+
+
+[State 1020, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 243, 0
+channel = 2
+
+[State 1020, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 244, 0
+channel = 3
+
+
+
+[State 1020, 軸位置移動]
+type = PosAdd
+trigger1 = AnimElem = 6
+x = 5
+
+
+[State 1020, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 6
+x = 15
+;;;y = -3
+
+[State 1020, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 7
+x = 4
+
+
+[State 1020, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 8
+x = 2
+
+
+[State 1020, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 9
+x = 0
+
+
+;;;;;;;;;;;;;;
+[State 0]
+type = Projectile
+trigger1 = AnimElem = 6
+hitflag = MAFD
+ProjAnim = 6521
+Projremove = 0
+Projpriority = 1
+offset = 0,0
+velocity = -2, 0
+attr = S, SP
+damage = 0,0
+animtype = Hard
+getpower = 0
+givepower = 0
+guard.dist = 0
+pausetime = 0,0
+sparkno = 0
+guard.sparkno = 0 
+ground.type = High
+ground.slidetime = 5
+ground.hittime = 15
+ground.velocity = -3
+airguard.velocity = -3.5,-2.75
+air.type = Low
+air.velocity = -2.5,-2
+projhits = 0
+
+
+
+
+
+
+[State 1020, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 6
+getpower  = 20
+attr = S, SA
+animtype  = Hard
+damage    = 80, 40
+getpower  = 0
+priority  = 5
+hitflag = MAFD
+guardflag = MA
+pausetime = 20,20
+sparkno = 3
+sparkxy = -10,-60
+hitsound   = s225,0
+guardsound = s6,0
+ground.type = Low
+ground.slidetime = 20
+ground.hittime  = 0
+ground.velocity = -8,-7
+guard.velocity = -10
+guard.time = 5, 20
+air.velocity = -8,-7
+airguard.velocity = -5, -4
+fall = 1
+fall.recover = 0 
+p2stateno = 1030
+
+
+
+
+
+
+[State 1020, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+
+
+
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+;------------------;------------------;------------------
+
+
+;;;;竜子キック
+;;;相手制御
+
+[Statedef 1036]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+[State -2, アニメ変更]
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = !SelfAnimExist(5052)
+value = 5050
+
+[State -2, 攻撃を食らった時の移動速度]
+type = VelSet
+trigger1 = Time = 0
+x = -4
+y = -12
+
+[State -2, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .45
+
+[State -2, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;アッパー キック 起き上がり 旋風脚　雷撃 竜巻
+;;;相手制御
+
+[Statedef 1035]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+[State -2, アニメ変更]
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = !SelfAnimExist(5052)
+value = 5050
+
+[State -2, 攻撃を食らった時の移動速度]
+type = VelSet
+trigger1 = Time = 0
+x = -2
+y = -8
+
+[State -2, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .45
+
+[State -2, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+
+
+
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+
+
+;;;;超稲妻弾
+;;;相手制御11111
+
+[Statedef 1025]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+[State 1025, アニメ変更]
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = !SelfAnimExist(5052)
+value = 5050
+
+[State 1025, 攻撃を食らった時の移動速度]
+type = VelSet
+trigger1 = Time = 0
+x = -7
+y = -7
+
+[State 1025, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .45
+
+[State 1025, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+
+;;;;ウルスラ
+;;;相手制御
+
+[Statedef 1039]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+
+
+;;;カメラ追わない
+[State -1]
+type = ScreenBound
+trigger1 = 1
+value = 1
+movecamera = 0
+
+
+
+
+
+[State -2, アニメ変更]
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = !SelfAnimExist(5052)
+value = 5050
+
+
+
+
+[State -2, 速度]
+type = VelSet
+trigger1 = Time = 0
+x = -2
+y = -15
+
+
+
+
+[State -2, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .45
+
+
+
+
+[State -2, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+
+;;;相手制御デフォ
+
+
+[Statedef 1030]
+type    = A
+movetype= H
+physics = N
+velset = 0,0
+
+[State 1030, 制御した相手のアニメ変更]
+type = ChangeAnim2
+trigger1 = 1
+value = 1025
+
+[State 1030, ステート変更]
+type = ChangeState
+trigger1 = HitShakeOver = 1 ;ヒット硬直が解けたら
+value = 1031
+
+;------------------
+; 相手側制御 - 吹っ飛ぶ
+[Statedef 1031]
+type    = A
+movetype= H
+physics = N
+
+[State 1031, 攻撃を食らった時の移動速度]
+type = HitVelSet
+trigger1 = Time = 0
+x = 100
+y = -20
+
+[State 1031, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .45
+
+[State 1031, カメラスクロールの有無]
+type = ScreenBound
+triggerall = Pos y < -15
+trigger1 = BackEdgeBodyDist < 65  ;自分と後方の画面端との距離
+trigger2 = FrontEdgeBodyDist < 65 ;自分と前方の画面端との距離
+value = 1
+movecamera = 0,1
+
+[State 1031, ステート変更] ;壁に当たる時のステートに行く
+type = ChangeState
+triggerall = Pos y < -15
+trigger1 = BackEdgeBodyDist <= 20
+trigger2 = FrontEdgeBodyDist <= 20
+value = 1032
+
+[State 1031, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+
+;------------------
+; 相手側制御 - 壁に当たる
+[Statedef 1032]
+type    = A
+movetype= H
+physics = N
+
+[State 1032, 振り返る]
+type = Turn
+trigger1 = (Time = 0) && (FrontEdgeBodyDist <= 30)
+
+[State 1032, 軸位置移動]
+type = PosAdd
+trigger1 = Time = 0
+x = 15 - BackEdgeBodyDist
+
+[State 1032, 移動を止める]
+type = PosFreeze
+trigger1 = 1
+x = 1
+y = 1
+
+[State 1032, カメラスクロールの有無]
+type = ScreenBound
+trigger1 = 1
+value = 1
+movecamera = 0,1
+
+[State 1032, エフェクト表示]
+type = Explod
+trigger1 = Time = 0
+anim = F72
+pos = 0, floor (screenpos y) - 50
+postype = back
+sprpriority = 3
+
+[State 1032, 制御した相手のアニメ変更]
+type = ChangeAnim2
+trigger1 = Time = 0
+value = 1027
+
+[State 1032, 音を鳴らす]
+type = PlaySnd
+trigger1 = Time = 0
+value = F7,0
+
+[State 1032, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 1033
+
+;------------------
+;相手側制御 - 壁からのバウンド
+[Statedef 1033]
+type    = A
+movetype= H
+physics = N
+
+
+[State 1033, 移動速度]
+type = VelSet
+trigger1 = Time = 0
+y = -6
+
+[State 1033, 移動速度]
+type = VelSet
+trigger1 = Time = 0
+x = 1.6
+
+[State 1033, 振り返る]
+type = Turn
+trigger1 = (Time = 0) && (BackEdgeDist < 30)
+
+[State 1033, 速度加算]
+type = VelAdd
+trigger1 = 1
+y = .35
+
+[State 1033, アニメ変更]
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = !SelfAnimExist(5052)
+value = 5050
+
+[State 1033, アニメ変更] ;キリモミ吹っ飛び
+type = ChangeAnim
+trigger1 = Time = 0
+trigger1 = SelfAnimExist(5052) ;airファイルに[Begin Action 5052]のアニメが存在しているかを確認します
+value = 5052
+
+[State 1033, アニメ変更]
+type = ChangeAnim
+trigger1 = Vel Y > -2
+trigger1 = Anim = 5050
+trigger1 = SelfAnimExist(5060)
+persistent = 0
+value = 5060
+
+[State 1033, アニメ変更]
+type = ChangeAnim
+trigger1 = Vel Y > -2
+trigger1 = Anim = 5052
+trigger1 = SelfAnimExist(5062)
+persistent = 0
+value = 5062
+
+[State 1033, 相手ステートに戻す]
+type = SelfState
+trigger1 = (Vel y > 0) && (Pos y >= 0)
+value = 5100
+

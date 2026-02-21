@@ -1,0 +1,28 @@
+
+[Info]
+Name         = "RYUKO2nd" 
+DisplayName  = "RYUKO2nd" 
+Author       = "OGGY" 
+
+
+
+
+[Files]
+Cmd      = RYUKO.cmd
+Cns      = RYUKO1.cns
+St       = RYUKO1.cns
+st0      = RYUKO2.cns 
+st1      = RYUKO3.cns 
+st2      = RYUKO4.cns
+st3      = RYUKO5.cns
+st4      = RYUKO6.cns
+st5      = RYUKO7.cns
+st6      = RYUKO-WORKS.cns
+st7      = RYUKO8.cns
+
+
+
+StCommon = common1.cns
+Sprite   = RYUKO.sff
+Anim     = RYUKO.air
+Sound    = RYUKO.snd

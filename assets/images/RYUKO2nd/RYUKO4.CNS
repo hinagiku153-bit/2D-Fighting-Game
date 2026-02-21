@@ -1,0 +1,321 @@
+
+; バーンナックル
+
+
+[Statedef 6600]
+type    = S
+movetype= A
+physics = S
+juggle  = 5
+velset = 0,0
+anim = 6600
+ctrl = 0
+sprpriority = 2
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 1
+value = 261, 0
+channel = 0;;8
+
+
+
+[State -2]
+type = hitadd
+trigger1 = 1
+value = -1
+
+
+
+
+[State -2]
+type = turn
+trigger1 = P2Dist X < -60
+
+
+
+[State -2, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 7
+trigger3 = AnimElem = 8
+trigger4 = AnimElem = 9
+trigger5 = AnimElem = 10
+trigger6 = AnimElem = 11
+trigger7 = AnimElem = 12
+trigger8 = AnimElem = 13
+trigger9 = AnimElem = 14
+trigger10 = AnimElem = 15
+
+trigger11 = AnimElem = 16
+trigger12 = AnimElem = 17
+trigger13 = AnimElem = 18
+trigger14 = AnimElem = 19
+trigger15 = AnimElem = 20
+trigger16 = AnimElem = 21
+trigger17 = AnimElem = 22
+trigger18 = AnimElem = 23
+trigger19 = AnimElem = 24
+trigger20 = AnimElem = 25
+
+trigger21 = AnimElem = 26
+trigger22 = AnimElem = 27
+trigger23 = AnimElem = 28
+trigger24 = AnimElem = 29
+trigger25 = AnimElem = 30
+trigger26 = AnimElem = 31
+trigger27 = AnimElem = 32
+trigger28 = AnimElem = 33
+trigger29 = AnimElem = 34
+trigger30 = AnimElem = 35
+
+trigger31 = AnimElem = 36
+trigger32 = AnimElem = 37
+trigger33 = AnimElem = 38
+trigger34 = AnimElem = 39
+trigger35 = AnimElem = 40
+trigger36 = AnimElem = 41
+trigger37 = AnimElem = 42
+trigger38 = AnimElem = 43
+trigger39 = AnimElem = 44
+trigger40 = AnimElem = 45
+trigger41 = AnimElem = 46
+trigger42 = AnimElem = 47
+trigger43 = AnimElem = 48
+trigger44 = AnimElem = 49
+trigger45 = AnimElem = 50
+x = 16
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 5
+value = 247, 0
+channel = 1
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 8
+value = 231, 0
+channel = 2
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 257, 0
+channel = 3
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 257, 0
+channel = 4
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+value = 257, 0
+channel = 5
+
+
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 26
+trigger3 = AnimElem = 46
+value = 254, 0
+channel = 6
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 16
+trigger2 = AnimElem = 36
+value = 256, 0
+channel = 7
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 26
+trigger3 = AnimElem = 46
+value = 254, 0
+channel = 8
+
+
+[State -1, 音を鳴らす]
+type = PlaySnd
+trigger1 = AnimElem = 16
+trigger2 = AnimElem = 36
+value = 256, 0
+channel = 9
+
+
+[State -2, 移動速度]
+type = VelSet
+trigger1 = AnimElem = 51
+trigger2 = AnimElem = 52
+trigger3 = AnimElem = 53
+trigger4 = AnimElem = 54
+trigger5 = AnimElem = 55
+x = 3
+
+
+
+
+
+[State 6600, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 6
+trigger2 = AnimElem = 7
+trigger3 = AnimElem = 8
+trigger4 = AnimElem = 9
+trigger5 = AnimElem = 10
+trigger6 = AnimElem = 11
+trigger7 = AnimElem = 12
+trigger8 = AnimElem = 13
+trigger9 = AnimElem = 14
+trigger10 = AnimElem = 15
+
+trigger11 = AnimElem = 16
+trigger12 = AnimElem = 17
+trigger13 = AnimElem = 18
+trigger14 = AnimElem = 19
+trigger15 = AnimElem = 20
+trigger16 = AnimElem = 21
+trigger17 = AnimElem = 22
+trigger18 = AnimElem = 23
+trigger19 = AnimElem = 24
+trigger20 = AnimElem = 25
+
+trigger21 = AnimElem = 26
+trigger22 = AnimElem = 27
+trigger23 = AnimElem = 28
+trigger24 = AnimElem = 29
+trigger25 = AnimElem = 30
+trigger26 = AnimElem = 31
+trigger27 = AnimElem = 32
+trigger28 = AnimElem = 33
+trigger29 = AnimElem = 34
+trigger30 = AnimElem = 35
+
+trigger31 = AnimElem = 36
+trigger32 = AnimElem = 37
+trigger33 = AnimElem = 38
+trigger34 = AnimElem = 39
+trigger35 = AnimElem = 40
+trigger36 = AnimElem = 41
+trigger37 = AnimElem = 42
+trigger38 = AnimElem = 43
+trigger39 = AnimElem = 44
+trigger40 = AnimElem = 45
+
+trigger41 = AnimElem = 46
+trigger42 = AnimElem = 47
+trigger43 = AnimElem = 48
+trigger44 = AnimElem = 49
+trigger45 = AnimElem = 50
+
+hitflag = MAFD
+getpower = 0
+attr = S, HA
+animtype  = Medium
+damage    = 4,2
+guardflag = MA
+pausetime = 5,5
+sparkno = 1
+sparkxy = -10,-70
+hitsound   = s218,0
+guard.dist = 50
+guardsound = s6,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime  = 5
+ground.velocity = -5
+air.velocity = -2,-0
+air.fall = 1
+fall = 1
+fall.recover = 0
+fall.damage = 50
+absolute = 1
+mindist = 50,-10   
+maxdist = 50,-10  
+
+
+
+
+
+
+
+
+
+
+
+
+[State 6600, ヒット定義]
+type = HitDef
+trigger1 = AnimElem = 50
+hitflag = MAFD
+getpower = 0
+attr = S, HA
+animtype  = Medium
+damage    = 100,50
+guardflag = MA
+pausetime = 3,5
+sparkno = 1
+sparkxy = -10,-70
+hitsound   = s225,0
+guard.dist = 50
+guardsound = s6,0
+ground.type = High
+ground.slidetime = 5
+ground.hittime  = 5
+ground.velocity = -5
+air.velocity = -2,-7
+air.fall = 1
+fall = 1
+fall.recover = 0
+fall.damage = 0
+absolute = 1
+mindist = 50,-10   
+maxdist = 50,-10  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[State -1, ステート変更]
+type = ChangeState
+trigger1 = AnimTime = 0
+value = 0
+ctrl = 1
+
+
+
+
+
+
+
