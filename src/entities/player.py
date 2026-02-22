@@ -7,7 +7,9 @@ from typing import Any
 
 import pygame
 
+from src.characters.definition import CharacterDefinition
 from src.utils import constants
+from src.utils.paths import resource_path
 
 
 @dataclass
@@ -39,8 +41,10 @@ class Player:
         *,
         x: int,
         color: tuple[int, int, int],
+        character: CharacterDefinition,
     ) -> None:
         self.color = color
+        self.character = character
 
         # pos_x / pos_y は「キャラクターの足元（接地中点）」を表す。
         # AIR のオフセット適用や、描画の基準点として使う。
@@ -94,6 +98,54 @@ class Player:
         # ヒット硬直（操作不能）。0 の時は通常。
         self.hitstun_frames_left: int = 0
 
+        self.hitstun_timer: int = 0
+
+        self.is_in_combo: bool = False
+
+        self._combo_attacker_side: int | None = None
+        self._combo_end_side_pending: int | None = None
+
+        self.combo_display_frames_left: int = 0
+        self.combo_display_count: int = 0
+
+        self.combo_damage_total: int = 0
+        self.combo_damage_display: int = 0
+
+        self._input_frame_counter: int = 0
+        # 入力履歴（コマンド検知用）。直近10〜15F程度の「方向/ボタン」履歴を保持する。
+        # entry の例:
+        # - "DIR:D" / "DIR:DF" / "DIR:F" / "DIR:N"
+        # - "BTN:P" / "BTN:K"
+        self.input_buffer: list[tuple[int, str]] = []
+        # 先行入力（硬直明けに自動で技を出す）用の攻撃バッファ。
+        self.attack_buffer: list[tuple[int, str]] = []
+
+        self.hadoken_flash_frames_left: int = 0
+
+        self._hadoken_action_id: int | None = None
+        self._hadoken_spawned: bool = False
+        self._hadoken_spawn_pending: bool = False
+        self._hadoken_spawn_delay_frames_left: int = 0
+
+        self.power_gauge: int = 0
+
+        self._shinku_action_id: int | None = None
+        self._shinku_spawned: bool = False
+        self._shinku_spawn_pending: bool = False
+
+        self._last_punch_pressed_frame: int | None = None
+        self._last_kick_pressed_frame: int | None = None
+        self._punch_consumed_for_hadoken_frame: int | None = None
+        self._punch_consumed_for_shinku_frame: int | None = None
+
+        self._rush_frames_left: int = 0
+        self._rush_startup_frames_left: int = 0
+        self._rush_effect_pending: bool = False
+        self._rush_effect_pos: tuple[int, int] | None = None
+        self._rush_recovery_frames_left: int = 0
+        self._rush_recovery_total_frames: int = 0
+        self._rush_has_hit: bool = False
+
         # ガード硬直（操作不能）。0 の時は通常。
         self.blockstun_frames_left: int = 0
 
@@ -122,6 +174,8 @@ class Player:
         # - loop: Idle/Walkなど「ループして再生し続ける」
         self._action_mode: str = "loop"
         self._action_finished: bool = False
+
+        self._knocked_down: bool = False
 
     @property
     def attacking(self) -> bool:
@@ -159,7 +213,8 @@ class Player:
         # HIT（のけぞり）状態へ遷移し、AIR Action 5000 を oneshot 再生する。
         if frames is None:
             frames = int(getattr(constants, "HITSTUN_DEFAULT_FRAMES", 20))
-        self.hitstun_frames_left = max(self.hitstun_frames_left, int(frames))
+        self.hitstun_frames_left = max(0, int(frames))
+        self.hitstun_timer = max(0, int(frames))
 
         # 攻撃中の相殺など最小限の整合性として、攻撃状態は解除する。
         self._attack_frames_left = 0
@@ -169,10 +224,100 @@ class Player:
         # Action 5000（地上ダメージ）へ。
         self._set_action(self._best_action_id([5000]), mode="oneshot")
 
+    def enter_knockdown(self) -> None:
+        # KO 用：ダウンモーションへ。
+        # 5040番台が無ければ 5000 などへフォールバック。
+        self.hitstop_frames_left = 0
+        self.hitstun_frames_left = 0
+        self.hitstun_timer = 0
+        self.blockstun_frames_left = 0
+
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = None
+        self.attack_buffer.clear()
+
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.knockback_vx = 0.0
+        self.on_ground = True
+        self.crouching = False
+
+        self._knocked_down = True
+
+        action_id = self._best_action_id([5041, 5040, 5042, 5043, 5044, 5000])
+        self._set_action(int(action_id), mode="oneshot")
+
+    def reset_round_state(self) -> None:
+        # Round start reset: clear transient state that should not carry over.
+        self.hitstop_frames_left = 0
+        self.hitstun_frames_left = 0
+        self.hitstun_timer = 0
+        self.blockstun_frames_left = 0
+
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = None
+        self._registered_hit_ids.clear()
+        self._last_clsn1_signature = None
+        self._current_hit_id = 0
+
+        self.is_in_combo = False
+        self._combo_attacker_side = None
+        self._combo_end_side_pending = None
+        self.combo_display_frames_left = 0
+        self.combo_display_count = 0
+        self.combo_damage_total = 0
+        self.combo_damage_display = 0
+
+        self.knockback_vx = 0.0
+
+        self.input_buffer.clear()
+        self.attack_buffer.clear()
+        self._last_punch_pressed_frame = None
+        self._last_kick_pressed_frame = None
+        self._punch_consumed_for_hadoken_frame = None
+        self._punch_consumed_for_shinku_frame = None
+        self._kick_consumed_for_rush_frame = -1
+
+        self._hadoken_action_id = None
+        self._hadoken_spawned = False
+        self._hadoken_spawn_pending = False
+        self._hadoken_spawn_delay_frames_left = 0
+        self.hadoken_flash_frames_left = 0
+
+        self._shinku_action_id = None
+        self._shinku_spawned = False
+        self._shinku_spawn_pending = False
+
+        self._rush_frames_left = 0
+        self._rush_startup_frames_left = 0
+        self._rush_recovery_frames_left = 0
+        self._rush_recovery_total_frames = 0
+        self._rush_has_hit = False
+        self._rush_effect_pending = False
+        self._rush_effect_pos = None
+
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.on_ground = True
+        self.crouching = False
+
+        self._action_finished = False
+        self._action_mode = "loop"
+        self._knocked_down = False
+        if self._air_actions:
+            self._set_action(self._best_action_id([0]), mode="loop")
+
     def enter_blockstun(self, *, frames: int | None = None, crouching: bool = False) -> None:
         if frames is None:
             frames = int(getattr(constants, "BLOCKSTUN_DEFAULT_FRAMES", 12))
         self.blockstun_frames_left = max(self.blockstun_frames_left, int(frames))
+
+        if self.is_in_combo:
+            self._combo_end_side_pending = self._combo_attacker_side
+            self.is_in_combo = False
+            self._combo_attacker_side = None
 
         # ガード中は攻撃状態を解除する。
         self._attack_frames_left = 0
@@ -200,7 +345,6 @@ class Player:
         self._registered_hit_ids.clear()
         self._last_clsn1_signature = None
         self._current_hit_id = 0
-        self.combo_count = 0
 
         info = self._infer_move_frame_info(attack_id)
         if info is None:
@@ -217,6 +361,38 @@ class Player:
             self._set_action(action_id, mode="oneshot")
 
     def apply_input(self, inp: PlayerInput) -> None:
+        self._input_frame_counter += 1
+
+        self._push_direction_history(move_x=inp.move_x, crouch=inp.crouch)
+
+        if inp.attack_id is not None:
+            # 突進（RUSH）は「方向コマンド + キック」で成立するため、
+            # 通常キック攻撃を start_attack する前に判定して優先的に発動する。
+            atk = str(inp.attack_id)
+            if atk in set(getattr(self.character, "rush_attack_ids", set())):
+                self._push_button_history(atk)
+                if (
+                    (not self.is_rushing())
+                    and int(self._rush_recovery_frames_left) <= 0
+                    and self.check_command_rush()
+                    and self._can_start_buffered_attack_now()
+                ):
+                    self.attack_buffer.clear()
+                    self.start_rush()
+                    return
+
+            # 先行入力：今すぐ出せるなら即発動、出せないならバッファへ。
+            if self._can_start_buffered_attack_now():
+                self.attack_buffer.clear()
+                info = self._infer_move_frame_info(inp.attack_id)
+                if info is not None:
+                    self._last_move_frame_info = info
+                self.start_attack(inp.attack_id)
+            else:
+                self._push_attack_buffer(inp.attack_id)
+
+            self._push_button_history(inp.attack_id)
+
         # 「後ろ入力」を保持しているか（相手側は main が facing を更新済みであることが前提）。
         # move_x は -1/0/+1 なので、自分の向きと逆が「後ろ」。
         self.holding_back = (inp.move_x != 0) and ((inp.move_x * self.facing) < 0)
@@ -257,13 +433,517 @@ class Player:
             self.vel_y = constants.JUMP_VELOCITY
             self.on_ground = False
 
-        # 攻撃は押した瞬間だけ開始。
-        if inp.attack_id is not None:
-            # デバッグ表示用に、攻撃が成立しなくても「押した技」のフレーム情報は更新する。
-            info = self._infer_move_frame_info(inp.attack_id)
-            if info is not None:
-                self._last_move_frame_info = info
-            self.start_attack(inp.attack_id)
+        self._try_consume_buffered_attack()
+
+    def process_special_inputs(
+        self,
+        *,
+        attack_id: str | None,
+        early_frames: int,
+        super_cost: int,
+    ) -> dict[str, Any]:
+        now = int(self.get_input_frame_counter())
+        early = max(0, int(early_frames))
+
+        did_rush = False
+        did_hadoken = False
+        did_shinku = False
+        clear_attack_id = False
+
+        tokens = [t for (_f, t) in self.input_buffer]
+
+        def _match_sequence(seq: list[str]) -> bool:
+            # Match as an ordered subsequence in the buffer tail.
+            # This keeps the command system lenient (allows extra tokens between inputs),
+            # similar to the previous dedicated command checks.
+            if not seq:
+                return False
+
+            i = len(tokens) - 1
+            for want in reversed(seq):
+                found = False
+                for j in range(i, -1, -1):
+                    if tokens[j] == want:
+                        i = j - 1
+                        found = True
+                        break
+                if not found:
+                    return False
+            return True
+
+        def _any_match(seqs: list[list[str]]) -> bool:
+            for s in seqs:
+                if _match_sequence(s):
+                    return True
+            return False
+
+        def _consume_early(key: str) -> int | None:
+            if key == "kick_rush":
+                return self.consume_recent_kick_for_rush()
+            if key == "punch_hadoken":
+                return self.consume_recent_punch_for_hadoken()
+            if key == "punch_shinku":
+                return self.consume_recent_punch_for_shinku()
+            return None
+
+        def _can_trigger_special(spec_key: str) -> bool:
+            if spec_key == "RUSH":
+                return (not self.is_rushing()) and int(self._rush_recovery_frames_left) <= 0
+            return True
+
+        def _trigger(spec_key: str) -> None:
+            nonlocal did_rush, did_hadoken, did_shinku
+            if spec_key == "RUSH":
+                self.start_rush()
+                did_rush = True
+                return
+            if spec_key == "HADOKEN":
+                self.start_hadoken()
+                did_hadoken = True
+                return
+            if spec_key == "SHINKU_HADOKEN":
+                self.start_shinku_hadoken()
+                did_shinku = True
+                return
+
+        specials = list(getattr(self.character, "specials", []) or [])
+
+        for sp in specials:
+            if not _can_trigger_special(str(getattr(sp, "key", ""))):
+                continue
+
+            sp_key = str(getattr(sp, "key", ""))
+            seqs = list(getattr(sp, "sequences", []) or [])
+            immediate_ids = set(getattr(sp, "immediate_attack_ids", set()) or set())
+            consume_key = str(getattr(sp, "early_consume_key", ""))
+            requires_power = bool(getattr(sp, "requires_power", False))
+
+            # 1) Immediate trigger: button pressed this frame
+            if attack_id is not None and str(attack_id) in immediate_ids:
+                if _any_match(seqs):
+                    if requires_power and (not self.spend_power(int(super_cost))):
+                        continue
+                    _trigger(sp_key)
+                    if sp_key == "RUSH":
+                        clear_attack_id = True
+                    return {
+                        "did_rush": did_rush,
+                        "did_hadoken": did_hadoken,
+                        "did_shinku": did_shinku,
+                        "clear_attack_id": clear_attack_id,
+                    }
+
+            # 2) Early input: button within early window
+            if _any_match(seqs):
+                f = _consume_early(consume_key)
+                if f is not None and (now - int(f)) <= early:
+                    if requires_power and (not self.spend_power(int(super_cost))):
+                        continue
+                    _trigger(sp_key)
+                    if sp_key == "RUSH":
+                        clear_attack_id = True
+                    return {
+                        "did_rush": did_rush,
+                        "did_hadoken": did_hadoken,
+                        "did_shinku": did_shinku,
+                        "clear_attack_id": clear_attack_id,
+                    }
+
+        return {
+            "did_rush": did_rush,
+            "did_hadoken": did_hadoken,
+            "did_shinku": did_shinku,
+            "clear_attack_id": clear_attack_id,
+        }
+
+    def _push_attack_buffer(self, attack_id: str) -> None:
+        buf_frames = int(getattr(constants, "INPUT_BUFFER_FRAMES", 10))
+        now = int(self._input_frame_counter)
+        self.attack_buffer.append((now, str(attack_id)))
+        cutoff = now - max(1, buf_frames)
+        self.attack_buffer = [(f, a) for (f, a) in self.attack_buffer if f > cutoff]
+
+    def _try_consume_buffered_attack(self) -> None:
+        if not self.attack_buffer:
+            return
+        if not self._can_start_buffered_attack_now():
+            return
+
+        _f, attack_id = self.attack_buffer[-1]
+        self.attack_buffer.clear()
+        info = self._infer_move_frame_info(attack_id)
+        if info is not None:
+            self._last_move_frame_info = info
+        self.start_attack(attack_id)
+
+    def _push_direction_history(self, *, move_x: int, crouch: bool) -> None:
+        # 相対方向（自分の向き基準）で履歴化する。
+        # 236は「下, 下前, 前」なので forward=+1 になるよう facing を掛ける。
+        rel_x = int(move_x) * int(self.facing)
+        down = bool(crouch and self.on_ground)
+        if down and rel_x > 0:
+            token = "DIR:DF"
+        elif down and rel_x < 0:
+            token = "DIR:DB"
+        elif down:
+            token = "DIR:D"
+        elif rel_x > 0:
+            token = "DIR:F"
+        elif rel_x < 0:
+            token = "DIR:B"
+        else:
+            token = "DIR:N"
+
+        now = int(self._input_frame_counter)
+        if self.input_buffer and self.input_buffer[-1][1] == token:
+            return
+        self._push_command_token(token)
+
+    def _push_button_history(self, attack_id: str) -> None:
+        atk = str(attack_id)
+        is_punch = atk in set(getattr(self.character, "punch_attack_ids", set()))
+        is_kick = atk in set(getattr(self.character, "kick_attack_ids", set()))
+        if is_punch:
+            self._push_command_token("BTN:P")
+            self._last_punch_pressed_frame = int(self._input_frame_counter)
+        elif is_kick:
+            self._push_command_token("BTN:K")
+            self._last_kick_pressed_frame = int(self._input_frame_counter)
+
+    def get_input_frame_counter(self) -> int:
+        return int(self._input_frame_counter)
+
+    def consume_recent_punch_for_hadoken(self) -> int | None:
+        f = self._last_punch_pressed_frame
+        if f is None:
+            return None
+        if self._punch_consumed_for_shinku_frame == f:
+            return None
+        if self._punch_consumed_for_hadoken_frame == f:
+            return None
+        self._punch_consumed_for_hadoken_frame = f
+        return int(f)
+
+    def consume_recent_punch_for_shinku(self) -> int | None:
+        f = self._last_punch_pressed_frame
+        if f is None:
+            return None
+        if self._punch_consumed_for_shinku_frame == f:
+            return None
+        self._punch_consumed_for_shinku_frame = f
+        return int(f)
+
+    def consume_recent_kick_for_rush(self) -> int | None:
+        f = self._last_kick_pressed_frame
+        if f is None:
+            return None
+        if int(getattr(self, "_kick_consumed_for_rush_frame", -1)) == int(f):
+            return None
+        self._kick_consumed_for_rush_frame = int(f)
+        return int(f)
+
+    def check_command_rush(self) -> bool:
+        # 簡易：下後ろ（DB）→ キック で成立。
+        # レベル緩和：DB が無ければ、D→B の順でもOK。
+        if not self.input_buffer:
+            return False
+        tokens = [t for (_f, t) in self.input_buffer]
+        frames = [int(f) for (f, _t) in self.input_buffer]
+        if "BTN:K" not in tokens:
+            return False
+
+        i_btn = None
+        for i in range(len(tokens) - 1, -1, -1):
+            if tokens[i] == "BTN:K":
+                i_btn = i
+                break
+        if i_btn is None:
+            return False
+
+        def _find_prev(start_i: int, wants: set[str]) -> int | None:
+            for j in range(start_i, -1, -1):
+                if tokens[j] in wants:
+                    return j
+            return None
+
+        i_db = _find_prev(i_btn - 1, {"DIR:DB"})
+        if i_db is None:
+            i_b = _find_prev(i_btn - 1, {"DIR:B"})
+            if i_b is None:
+                return False
+            i_d = _find_prev(i_b - 1, {"DIR:D", "DIR:DB"})
+            if i_d is None:
+                return False
+            i_db = i_d
+
+        win = int(getattr(constants, "INPUT_BUFFER_FRAMES", 25))
+        earliest = int(frames[i_db])
+        latest = int(frames[i_btn])
+        return (latest - earliest) <= max(1, win)
+
+    @staticmethod
+    def _find_236_start(tokens: list[str], *, start: int) -> int | None:
+        # 236: D -> (DF optional) -> F
+        def _find_prev(start_i: int, wants: set[str]) -> int | None:
+            for j in range(start_i, -1, -1):
+                if tokens[j] in wants:
+                    return j
+            return None
+
+        i_f = _find_prev(start, {"DIR:F"})
+        if i_f is None:
+            return None
+        i_mid = _find_prev(i_f - 1, {"DIR:DF", "DIR:D"})
+        if i_mid is None:
+            return None
+        if tokens[i_mid] == "DIR:DF":
+            i_d = _find_prev(i_mid - 1, {"DIR:D"})
+            return i_d
+        return i_mid
+
+    def _push_command_token(self, token: str) -> None:
+        buf_frames = int(getattr(constants, "INPUT_BUFFER_FRAMES", 10))
+        now = int(self._input_frame_counter)
+        self.input_buffer.append((now, str(token)))
+        cutoff = now - max(1, buf_frames)
+        self.input_buffer = [(f, t) for (f, t) in self.input_buffer if f > cutoff]
+
+    def check_command_hadoken(self) -> bool:
+        # 236 + Punch (相対方向: D -> DF -> F) + BTN:P
+        if not self.input_buffer:
+            return False
+
+        tokens = [t for (_f, t) in self.input_buffer]
+        if "BTN:P" not in tokens:
+            return False
+
+        # 最新の BTN:P を起点に遡って成立判定する。
+        i_btn = None
+        for i in range(len(tokens) - 1, -1, -1):
+            if tokens[i] == "BTN:P":
+                i_btn = i
+                break
+        if i_btn is None:
+            return False
+
+        def _find_prev(start: int, want: str) -> int | None:
+            for j in range(start, -1, -1):
+                if tokens[j] == want:
+                    return j
+            return None
+
+        i_d = self._find_236_start(tokens, start=i_btn)
+        return i_d is not None
+
+    def check_command_shinku_hadoken(self) -> bool:
+        if not self.input_buffer:
+            return False
+
+        tokens = [t for (_f, t) in self.input_buffer]
+        frames = [int(f) for (f, _t) in self.input_buffer]
+        if "BTN:P" not in tokens:
+            return False
+
+        i_btn = None
+        for i in range(len(tokens) - 1, -1, -1):
+            if tokens[i] == "BTN:P":
+                i_btn = i
+                break
+        if i_btn is None:
+            return False
+
+        def _find_prev(start: int, want: str) -> int | None:
+            for j in range(start, -1, -1):
+                if tokens[j] == want:
+                    return j
+            return None
+
+        i_d2 = self._find_236_start(tokens, start=i_btn)
+        if i_d2 is None:
+            return False
+        i_d1 = self._find_236_start(tokens, start=i_d2 - 1)
+        if i_d1 is None:
+            return False
+
+        win = int(getattr(constants, "INPUT_BUFFER_FRAMES", 25))
+        earliest = int(frames[i_d1])
+        latest = int(frames[i_btn])
+        return (latest - earliest) <= max(1, win)
+
+    def start_hadoken(self) -> None:
+        # HADOKEN専用アクションへ（存在しなければ現状維持）。
+        action_id = self._best_action_id(list(getattr(self.character, "hadoken_action_candidates", [6040, 3000, 3050])))
+        self._hadoken_action_id = int(action_id) if action_id in self._air_actions else None
+        if self._hadoken_action_id is not None:
+            self._set_action(self._hadoken_action_id, mode="oneshot")
+
+        self.attack_buffer.clear()
+
+        # 波動拳中は本体の攻撃判定（clsn1）を使わない。
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = None
+
+        self._hadoken_spawned = False
+        self._hadoken_spawn_pending = False
+        self._hadoken_spawn_delay_frames_left = 0
+        self.hadoken_flash_frames_left = max(self.hadoken_flash_frames_left, int(0.75 * constants.FPS))
+
+        self.add_power(int(getattr(constants, "POWER_GAIN_ON_SPECIAL_USE", 10)))
+
+        # デバッグ表示用：波動拳のフレーム情報（全体/発生/硬直）。
+        try:
+            a = self._air_actions.get(int(self._hadoken_action_id or 0))
+            frames = [] if not a else a.get("frames", [])
+            if isinstance(frames, list) and frames:
+                times = [max(0, int(fr.get("time", 0))) for fr in frames if isinstance(fr, dict)]
+                total = int(sum(times))
+
+                # 6040-1..3 の3枚モーション想定。
+                base_before_last = int(sum(times[:2])) if len(times) >= 2 else 0
+                delay = int(getattr(constants, "HADOKEN_SPAWN_DELAY_FRAMES", 20))
+                startup = max(0, base_before_last + delay)
+                active = 1
+                recovery = max(0, total - startup - active)
+                self._last_move_frame_info = MoveFrameInfo(
+                    attack_id="HADOKEN",
+                    total_frames=max(1, int(startup + active + recovery)),
+                    startup_frames=int(startup),
+                    active_frames=int(active),
+                    recovery_frames=int(recovery),
+                )
+        except Exception:
+            pass
+
+    def start_rush(self) -> None:
+        if self.is_rushing() or int(self._rush_recovery_frames_left) > 0:
+            return
+        if self.attacking:
+            return
+        if self.in_hitstun or self.in_blockstun:
+            return
+
+        # 突進開始：短い初期モーション（6520-1/2）→ 突進中は6520-2を固定表示。
+        rush_action = int(getattr(self.character, "rush_action_id", 6520))
+        if rush_action in self._air_actions:
+            self._set_action(rush_action, mode="oneshot")
+        else:
+            # アクションが無い場合でも、描画はスプライト固定で行うため続行。
+            self._current_action_id = None
+
+        self.attack_buffer.clear()
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = "RUSH"
+        self._rush_has_hit = False
+
+        self._rush_startup_frames_left = int(getattr(constants, "RUSH_STARTUP_FRAMES", 6))
+        self._rush_frames_left = int(getattr(constants, "RUSH_FRAMES", 18))
+
+        self._rush_effect_pending = True
+        self._rush_effect_pos = (int(self.rect.centerx), int(self.rect.bottom) - 12)
+
+    def is_rushing(self) -> bool:
+        return int(self._rush_frames_left) > 0 or int(self._rush_startup_frames_left) > 0
+
+    def is_rush_attack_active(self) -> bool:
+        return int(self._rush_frames_left) > 0
+
+    def _get_rush_hitbox(self) -> pygame.Rect:
+        # 突進中は、表示している 6520-2 のスプライトに合わせて当たり判定を作る。
+        key = tuple(getattr(self.character, "rush_sprite_key", (6520, 2)))
+        img = self._sprites.get((int(key[0]), int(key[1])))
+        if img is None:
+            return self._fallback_attack_hitbox(self.rect, facing=self.facing, crouching=False, attack_id="RUSH")
+
+        w = max(18, int(round(img.get_width() * 0.38)))
+        h = max(18, int(round(img.get_height() * 0.24)))
+
+        # スプライトの前方に寄せて、足元基準で配置。
+        cx = int(self.rect.centerx + (self.facing * int(round(img.get_width() * 0.25))))
+        by = int(self.rect.bottom - int(round(img.get_height() * 0.10)))
+        r = pygame.Rect(0, 0, int(w), int(h))
+        r.midbottom = (int(cx), int(by))
+        return r
+
+    def consume_rush_effect_spawn(self) -> tuple[int, int] | None:
+        if not self._rush_effect_pending:
+            return None
+        self._rush_effect_pending = False
+        return self._rush_effect_pos
+
+    def start_shinku_hadoken(self) -> None:
+        action_id = self._best_action_id(list(getattr(self.character, "shinku_action_candidates", [int(getattr(constants, "SHINKU_HADOKEN_ACTION_ID", 8000))])))
+        self._shinku_action_id = int(action_id) if action_id in self._air_actions else None
+        if self._shinku_action_id is not None:
+            self._set_action(self._shinku_action_id, mode="oneshot")
+
+        self.attack_buffer.clear()
+
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = None
+
+        self._shinku_spawned = False
+        self._shinku_spawn_pending = False
+
+        self.add_power(int(getattr(constants, "POWER_GAIN_ON_SPECIAL_USE", 10)))
+
+        try:
+            a = self._air_actions.get(int(self._shinku_action_id or 0))
+            frames = [] if not a else a.get("frames", [])
+            if isinstance(frames, list) and frames:
+                times = [max(0, int(fr.get("time", 0))) for fr in frames if isinstance(fr, dict)]
+                total = int(sum(times))
+                spawn_i = int(getattr(constants, "SHINKU_HADOKEN_SPAWN_FRAME_INDEX", 3))
+                startup = int(sum(times[: max(0, spawn_i)]))
+                active = 1
+                recovery = max(0, total - startup - active)
+                self._last_move_frame_info = MoveFrameInfo(
+                    attack_id="SHINKU_HADOKEN",
+                    total_frames=max(1, int(startup + active + recovery)),
+                    startup_frames=int(startup),
+                    active_frames=int(active),
+                    recovery_frames=int(recovery),
+                )
+        except Exception:
+            pass
+
+    def consume_hadoken_spawn(self) -> bool:
+        if not self._hadoken_spawn_pending:
+            return False
+        self._hadoken_spawn_pending = False
+        return True
+
+    def consume_shinku_spawn(self) -> bool:
+        if not self._shinku_spawn_pending:
+            return False
+        self._shinku_spawn_pending = False
+        return True
+
+    def can_spend_power(self, cost: int) -> bool:
+        return int(self.power_gauge) >= max(0, int(cost))
+
+    def spend_power(self, cost: int) -> bool:
+        c = max(0, int(cost))
+        if not self.can_spend_power(c):
+            return False
+        self.power_gauge = max(0, int(self.power_gauge) - c)
+        return True
+
+    def add_power(self, amount: int) -> None:
+        mx = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+        self.power_gauge = max(0, min(mx, int(self.power_gauge) + max(0, int(amount))))
+
+    def _can_start_buffered_attack_now(self) -> bool:
+        if self.attacking:
+            return False
+        if self.in_hitstun or self.in_blockstun:
+            return False
+        # oneshot action is still running (recovery)
+        if self._action_mode == "oneshot" and (self._current_action_id is not None) and (not self._action_finished):
+            return False
+        return True
 
     def get_last_move_frame_info(self) -> MoveFrameInfo | None:
         return self._last_move_frame_info
@@ -278,19 +958,31 @@ class Player:
         # AIR の ACTIONS を取り込み、PNG を (group,index) で引けるようにロードする。
         # まずは Action 0 のループ再生を最優先とする。
         self._air_actions = {int(a.get("action")): a for a in actions if "action" in a}
-        sprites, crop_offsets = self._load_sprites_from_organized(sprites_root)
+        resolved_root = sprites_root
+        try:
+            if not resolved_root.is_absolute():
+                resolved_root = resource_path(resolved_root)
+        except Exception:
+            resolved_root = resource_path(sprites_root)
+
+        sprites, crop_offsets = self._load_sprites_from_organized(resolved_root)
         self._sprites = sprites
         self._sprite_crop_offsets = crop_offsets
-        self._set_action(0, mode="loop")
+        self._set_action(self._best_action_id([0]), mode="loop")
 
     def _set_action(self, action_id: int, *, mode: str) -> None:
         if action_id not in self._air_actions:
-            self._current_action_id = None
-            self._frame_index = 0
-            self._frame_time_left = 0
-            self._action_mode = "loop"
-            self._action_finished = False
-            return
+            # AIR に Action 0 が無い等のケースでも、何か描画できるアクションへフォールバックする。
+            if self._air_actions:
+                fallback = self._best_action_id([0])
+                action_id = int(fallback)
+            else:
+                self._current_action_id = None
+                self._frame_index = 0
+                self._frame_time_left = 0
+                self._action_mode = "loop"
+                self._action_finished = False
+                return
 
         if self._current_action_id == action_id and self._action_mode == mode:
             return
@@ -305,7 +997,9 @@ class Player:
         frames = self._air_actions[action_id].get("frames", [])
         if frames:
             t = int(frames[0].get("time", 0))
-            self._frame_time_left = max(0, t)
+            if int(action_id) in {5000, 5040, 5041, 5042, 5043, 5044}:
+                t = 10
+            self._frame_time_left = max(1, t)
 
     @staticmethod
     def _load_sprites_from_organized(
@@ -361,7 +1055,9 @@ class Player:
 
         frame = frames[self._frame_index]
         t = int(frame.get("time", 0))
-        if t == -1:
+        if int(self._current_action_id or 0) in {5000, 5040, 5041, 5042, 5043, 5044}:
+            t = 10
+        if t < 0:
             # -1 はそのフレームで停止（またはループ）扱い。
             # oneshot の場合は「終了扱い」にして Idle 復帰させる。
             if self._action_mode == "oneshot":
@@ -369,7 +1065,7 @@ class Player:
             return
 
         if self._frame_time_left <= 0:
-            self._frame_time_left = max(0, t)
+            self._frame_time_left = max(1, t)
 
         self._frame_time_left -= 1
         if self._frame_time_left > 0:
@@ -379,19 +1075,28 @@ class Player:
         self._frame_index += 1
         if self._frame_index >= len(frames):
             if self._action_mode == "oneshot":
-                self._frame_index = len(frames) - 1
+                if bool(self._knocked_down) and int(self._current_action_id or 0) == 5041:
+                    target = min(9, max(0, len(frames) - 1))
+                    self._frame_index = int(target)
+                else:
+                    self._frame_index = len(frames) - 1
                 self._action_finished = True
                 return
             self._frame_index = 0
 
         next_t = int(frames[self._frame_index].get("time", 0))
-        self._frame_time_left = max(0, next_t)
+        if int(self._current_action_id or 0) in {5000, 5040, 5041, 5042, 5043, 5044}:
+            next_t = 10
+        self._frame_time_left = max(1, int(next_t))
 
     def update(self) -> None:
         # ヒットストップ中は「動作もタイマーも止める」。
         if self.hitstop_frames_left > 0:
             self.hitstop_frames_left -= 1
             return
+
+        if self.combo_display_frames_left > 0:
+            self.combo_display_frames_left -= 1
 
         self._action_frame_counter += 1
 
@@ -400,6 +1105,42 @@ class Player:
 
         if self.hitstun_frames_left > 0:
             self.hitstun_frames_left -= 1
+
+        prev_hitstun_timer = int(self.hitstun_timer)
+        if self.hitstun_timer > 0:
+            self.hitstun_timer -= 1
+            if self.hitstun_timer < 0:
+                self.hitstun_timer = 0
+
+        # 突進技：初期モーション後、一定フレーム前進して終了。
+        if self._rush_startup_frames_left > 0:
+            self._rush_startup_frames_left -= 1
+            self.vel_x = 0.0
+        elif self._rush_frames_left > 0:
+            self._rush_frames_left -= 1
+            speed = float(getattr(constants, "RUSH_SPEED", 10.0))
+            self.pos_x += float(self.facing) * speed
+            self.vel_x = 0.0
+            if self._rush_frames_left <= 0:
+                rec_action = int(getattr(constants, "RUSH_RECOVERY_ACTION_ID", 6760))
+                self._rush_recovery_frames_left = int(getattr(constants, "RUSH_RECOVERY_FRAMES", 12))
+                self._rush_recovery_total_frames = int(self._rush_recovery_frames_left)
+                if rec_action in self._air_actions:
+                    self._set_action(rec_action, mode="oneshot")
+                else:
+                    self._set_action(self._best_action_id([0]), mode="loop")
+                self._attack_id = None
+        elif self._rush_recovery_frames_left > 0:
+            self._rush_recovery_frames_left -= 1
+            self.vel_x = 0.0
+            if self._rush_recovery_frames_left <= 0 and (not self.in_hitstun):
+                self._set_action(self._best_action_id([0]), mode="loop")
+
+        prev_frame_index = int(self._frame_index)
+        if prev_hitstun_timer > 0 and self.hitstun_timer == 0 and self.is_in_combo:
+            self._combo_end_side_pending = self._combo_attacker_side
+            self.is_in_combo = False
+            self._combo_attacker_side = None
 
         if self.blockstun_frames_left > 0:
             self.blockstun_frames_left -= 1
@@ -412,11 +1153,48 @@ class Player:
 
         self._update_animation()
 
+        if (
+            self._hadoken_action_id is not None
+            and int(self._current_action_id or -1) == int(self._hadoken_action_id)
+            and (not self._hadoken_spawned)
+        ):
+            # 最後のモーション（6040-3 / frame_index==2）へ切り替わった瞬間に弾を出す。
+            if int(self._frame_index) == 2 and prev_frame_index != 2:
+                delay = int(getattr(constants, "HADOKEN_SPAWN_DELAY_FRAMES", 20))
+                self._hadoken_spawn_delay_frames_left = max(self._hadoken_spawn_delay_frames_left, max(0, delay))
+
+            if self._hadoken_spawn_delay_frames_left > 0:
+                self._hadoken_spawn_delay_frames_left -= 1
+                if self._hadoken_spawn_delay_frames_left <= 0:
+                    self._hadoken_spawned = True
+                    self._hadoken_spawn_pending = True
+
+        if (
+            self._shinku_action_id is not None
+            and int(self._current_action_id or -1) == int(self._shinku_action_id)
+            and (not self._shinku_spawned)
+        ):
+            spawn_i = int(getattr(constants, "SHINKU_HADOKEN_SPAWN_FRAME_INDEX", 3))
+            should_spawn = False
+            if int(self._frame_index) >= spawn_i and int(prev_frame_index) < spawn_i:
+                should_spawn = True
+            if self._action_mode == "oneshot" and bool(getattr(self, "_action_finished", False)):
+                should_spawn = True
+            if should_spawn:
+                self._shinku_spawned = True
+                self._shinku_spawn_pending = True
+
         self._update_multihit_state()
 
         # oneshot 終了（攻撃など）→ Idle へ戻す。
-        if self._action_mode == "oneshot" and self._action_finished and (not self.in_hitstun):
+        if self._action_mode == "oneshot" and self._action_finished and (not self.in_hitstun) and (not self._knocked_down):
             self._set_action(0, mode="loop")
+
+        if self.is_in_combo and (not self.in_hitstun) and (not self.in_blockstun) and self.on_ground:
+            if int(self._current_action_id or 0) == 0:
+                self._combo_end_side_pending = self._combo_attacker_side
+                self.is_in_combo = False
+                self._combo_attacker_side = None
 
         # 攻撃タイマーを進める。
         if self._attack_frames_left > 0:
@@ -426,7 +1204,6 @@ class Player:
                 self._registered_hit_ids.clear()
                 self._last_clsn1_signature = None
                 self._current_hit_id = 0
-                self.combo_count = 0
 
         # 空中にいる間だけ重力を加える。
         if not self.on_ground:
@@ -494,21 +1271,22 @@ class Player:
         for a in candidates:
             if a in self._air_actions:
                 return a
+        if self._air_actions:
+            # Idle(0) が無いキャラでも、最低限描画できるものを返す。
+            return int(sorted(self._air_actions.keys())[0])
         return 0
 
-    @staticmethod
-    def _attack_to_action_id(attack_id: str) -> int | None:
-        # キーコンフィグ/攻撃ID → AIR Action番号
-        mapping: dict[str, int] = {
-            "P1_U_LP": 200,
-            "P1_I_MP": 210,
-            "P1_O_HP": 229,
-            "P1_J_LK": 400,
-            "P1_K_MK": 410,
-            "P1_L_HK": 430,
-            "P2_L_PUNCH": 200,
-        }
-        return mapping.get(attack_id)
+    def _attack_to_action_id(self, attack_id: str) -> int | None:
+        mapping = getattr(self.character, "attack_action_map", {})
+        if not isinstance(mapping, dict):
+            return None
+        v = mapping.get(str(attack_id))
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
 
     def _infer_move_frame_info(self, attack_id: str) -> MoveFrameInfo | None:
         action_id = self._attack_to_action_id(attack_id)
@@ -737,6 +1515,8 @@ class Player:
 
     def get_hitboxes(self) -> list[pygame.Rect]:
         # 攻撃判定は「攻撃中」かつ「そのフレームのclsn1がある時のみ」有効。
+        if self.is_rush_attack_active():
+            return [self._get_rush_hitbox()]
         if not self.attacking:
             return []
 
@@ -759,6 +1539,8 @@ class Player:
         return []
 
     def can_deal_damage(self) -> bool:
+        if self.is_rush_attack_active():
+            return (not bool(self._rush_has_hit))
         if not self.attacking:
             return False
         if not self.get_hitboxes():
@@ -769,19 +1551,61 @@ class Player:
         return hit_id not in self._registered_hit_ids
 
     def register_current_hit(self) -> None:
+        if self.is_rush_attack_active():
+            self._rush_has_hit = True
+            return
         hit_id = int(self._current_hit_id)
         if hit_id > 0:
             self._registered_hit_ids.add(hit_id)
 
     def mark_damage_dealt(self) -> None:
         self.register_current_hit()
+
+    def start_combo_on_opponent(self, *, opponent_side: int) -> None:
+        self.combo_count = 1
+        self.combo_display_count = 1
+        self.combo_display_frames_left = 0
+        self.combo_damage_total = 0
+        self.combo_damage_display = 0
+
+    def extend_combo_on_opponent(self) -> None:
         self.combo_count += 1
+        self.combo_display_count = int(self.combo_count)
+        show_frames = int(getattr(constants, "COMBO_DISPLAY_FRAMES", int(2.5 * constants.FPS)))
+        self.combo_display_frames_left = max(self.combo_display_frames_left, show_frames)
+
+    def add_combo_damage(self, amount: int) -> None:
+        self.combo_damage_total += max(0, int(amount))
+        self.combo_damage_display = int(self.combo_damage_total)
+        if self.combo_display_count >= 2:
+            show_frames = int(getattr(constants, "COMBO_DISPLAY_FRAMES", int(2.5 * constants.FPS)))
+            self.combo_display_frames_left = max(self.combo_display_frames_left, show_frames)
+
+    def reset_combo_count(self) -> None:
+        self.combo_count = 0
+        self.combo_damage_total = 0
+        self.combo_damage_display = 0
+
+    def set_combo_victim_state(self, *, attacker_side: int, hitstun_frames: int) -> None:
+        self.is_in_combo = True
+        self._combo_attacker_side = int(attacker_side)
+        self.hitstun_timer = max(0, int(hitstun_frames))
+
+    def consume_combo_end_side(self) -> int | None:
+        side = self._combo_end_side_pending
+        self._combo_end_side_pending = None
+        return side
 
     def get_combo_count(self) -> int:
         return int(self.combo_count)
 
     def take_damage(self, damage: int) -> None:
-        self.hp = max(0, self.hp - int(damage))
+        d = max(0, int(damage))
+        self.hp = max(0, self.hp - d)
+        ratio = float(getattr(constants, "POWER_GAIN_ON_TAKE_DAMAGE_RATIO", 0.20))
+        gain = int(round(float(d) * max(0.0, ratio)))
+        if gain > 0:
+            self.add_power(gain)
 
     def apply_knockback(self, *, dir_x: int, amount_px: int) -> None:
         # dir_x はノックバック方向（+1:右 / -1:左）。
@@ -796,31 +1620,75 @@ class Player:
     def draw(self, surface: pygame.Surface, *, debug_draw: bool) -> None:
         # Sprite がロードできているなら、AIR の (group,index) を使って描画する。
         drawn_sprite = False
-        if self._current_action_id is not None:
-            action = self._air_actions.get(self._current_action_id)
-            frames: list[dict[str, Any]] = [] if not action else action.get("frames", [])
-            if frames:
-                frame = frames[self._frame_index]
-                key = (int(frame.get("group", -1)), int(frame.get("index", -1)))
-                img = self._sprites.get(key)
-                if img is not None:
-                    off_x = int(frame.get("x", 0))
-                    off_y = int(frame.get("y", 0))
 
-                    # facing が左向きの場合は左右反転し、xオフセットも反転させる。
-                    if self.facing < 0:
-                        img = pygame.transform.flip(img, True, False)
-                        off_x = -off_x
+        # 突進中は 6520-2 を固定表示（アニメーションのpngのまま突進）。
+        if self.is_rushing():
+            key = (6520, 2)
+            img = self._sprites.get(key)
+            if img is not None:
+                x = int(self.rect.centerx) - (img.get_width() // 2)
+                y = int(self.rect.bottom) - img.get_height()
+                if int(self.facing) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                surface.blit(img, (x, y))
+                drawn_sprite = True
 
-                    # 描画基準点は pos_x / pos_y（足元の接地中点）。
-                    # 以前の最小実装の描画方式：
-                    # - 画像の中心xを rect.centerx に合わせる
-                    # - yは rect.bottom から画像高さ分だけ上へ
-                    # - AIRの x/y は、その描画位置に加算する（補正値扱い）
-                    draw_x = self.rect.centerx - (img.get_width() // 2) + off_x
-                    draw_y = self.rect.bottom - img.get_height() + off_y
-                    surface.blit(img, (draw_x, draw_y))
-                    drawn_sprite = True
+        # 突進後の硬直は 6760-1..3 を固定で順番表示する。
+        if (not drawn_sprite) and int(self._rush_recovery_frames_left) > 0:
+            total = max(1, int(getattr(self, "_rush_recovery_total_frames", 0)) or 1)
+            left = int(self._rush_recovery_frames_left)
+            elapsed = max(0, total - left)
+            phase = elapsed / float(total)
+            idx = 1
+            if phase >= (2.0 / 3.0):
+                idx = 3
+            elif phase >= (1.0 / 3.0):
+                idx = 2
+
+            key = (int(getattr(constants, "RUSH_RECOVERY_ACTION_ID", 6760)), int(idx))
+            img = self._sprites.get(key)
+            if img is not None:
+                x = int(self.rect.centerx) - (img.get_width() // 2)
+                y = int(self.rect.bottom) - img.get_height()
+                if int(self.facing) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                surface.blit(img, (x, y))
+                drawn_sprite = True
+
+        if (not drawn_sprite) and self._current_action_id is not None:
+            frame = self._get_current_frame()
+            if frame is not None:
+                group = frame.get("group")
+                index = frame.get("index")
+                sprite = frame.get("sprite")
+                key: tuple[int, int] | None = None
+                if isinstance(group, (int, str)) and isinstance(index, (int, str)):
+                    try:
+                        key = (int(group), int(index))
+                    except (TypeError, ValueError):
+                        key = None
+                elif isinstance(sprite, (tuple, list)) and len(sprite) >= 2:
+                    try:
+                        key = (int(sprite[0]), int(sprite[1]))
+                    except (TypeError, ValueError):
+                        key = None
+
+                if key is not None:
+                    img = self._sprites.get(key)
+                    if img is not None:
+                        off_x = int(frame.get("x", 0))
+                        off_y = int(frame.get("y", 0))
+
+                        x = int(self.rect.centerx) - (img.get_width() // 2)
+                        y = int(self.rect.bottom) - img.get_height()
+
+                        # facing が左向きの場合は左右反転し、xオフセットも反転させる。
+                        if self.facing < 0:
+                            img = pygame.transform.flip(img, True, False)
+                            off_x = -off_x
+
+                        surface.blit(img, (x + off_x, y + off_y))
+                        drawn_sprite = True
 
         if not drawn_sprite:
             # フォールバック：攻撃中は見た目を少し明るくして、状態が分かるようにする。

@@ -17,14 +17,48 @@ CAPTION: str = GAME_TITLE
 # Timing（フレームレート）
 FPS: int = 60
 
+# Input
+# コマンド（236236 など）検知用に、方向/ボタン履歴を保持するフレーム数。
+INPUT_BUFFER_FRAMES: int = 25
+
+# Command leniency
+COMMAND_BUTTON_EARLY_FRAMES: int = 2
+
 # Physics（簡易物理）
 # y軸は下方向が + なので、ジャンプ初速は負の値になります。
 GRAVITY: float = 0.8
 WALK_SPEED: float = 4.0
 JUMP_VELOCITY: float = -14.0
+
+# Rush (突進技)
+RUSH_STARTUP_FRAMES: int = 6
+RUSH_FRAMES: int = 18
+RUSH_SPEED: float = 10.0
+RUSH_RECOVERY_ACTION_ID: int = 6760
+RUSH_RECOVERY_FRAMES: int = 12
 # 地面ライン（足元のY座標）。
 # ステージ（論理解像度）に対して固定。
 GROUND_Y: int = 470
+
+# Super (Shinku Hadoken)
+SHINKU_HADOKEN_ACTION_ID: int = 8000
+SHINKU_HADOKEN_MOTION_START_INDEX: int = 1
+SHINKU_HADOKEN_MOTION_END_INDEX: int = 6
+SHINKU_HADOKEN_PROJECTILE_GROUP_ID: int = 8001
+SHINKU_HADOKEN_PROJECTILE_START_INDEX: int = 1
+SHINKU_HADOKEN_PROJECTILE_END_INDEX: int = 7
+SHINKU_HADOKEN_SPAWN_FRAME_INDEX: int = 5
+SUPER_FREEZE_FRAMES: int = 30
+
+# Power Gauge
+POWER_GAUGE_MAX: int = 1000
+POWER_GAUGE_SEGMENTS: int = 10
+POWER_GAUGE_SHINKU_COST_SEGMENTS: int = 5
+POWER_GAUGE_SUPER_COST: int = int((POWER_GAUGE_MAX / max(1, POWER_GAUGE_SEGMENTS)) * POWER_GAUGE_SHINKU_COST_SEGMENTS)
+POWER_GAIN_ON_HIT: int = 50
+POWER_GAIN_ON_GUARD: int = 20
+POWER_GAIN_ON_SPECIAL_USE: int = 10
+POWER_GAIN_ON_TAKE_DAMAGE_RATIO: float = 0.20
 
 # Player（プレイヤー矩形の見た目サイズ）
 PLAYER_WIDTH: int = 50
@@ -78,6 +112,16 @@ HITSTUN_GUARD_EARLY_ACCEPT_FRAMES: int = 2
 ATTACK_SPECS: dict[str, dict[str, int]] = {
     # 1P attacks
     "P1_U_LP": {
+        "damage": 55,
+        "duration_frames": 12,
+        "hitbox_width": 38,
+        "hitbox_height": 22,
+        "hitbox_offset_x": 26,
+        "hitbox_offset_y": 28,
+        "knockback_px": 10,
+        "hitstop_frames": 6,
+    },
+    "P1_I_MP": {
         "damage": 40,
         "duration_frames": 8,
         "hitbox_width": 30,
@@ -89,7 +133,7 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "recovery_bonus_frames": 6,
         "attacker_recoil_px": 4,
     },
-    "P1_I_MP": {
+    "P1_O_HP": {
         "damage": 65,
         "duration_frames": 12,
         "hitbox_width": 38,
@@ -99,7 +143,7 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "knockback_px": 10,
         "hitstop_frames": 6,
     },
-    "P1_O_HP": {
+    "P1_J_LK": {
         "damage": 110,
         "duration_frames": 16,
         "hitbox_width": 48,
@@ -109,27 +153,7 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "knockback_px": 16,
         "hitstop_frames": 8,
     },
-    "P1_J_LK": {
-        "damage": 55,
-        "duration_frames": 12,
-        "hitbox_width": 38,
-        "hitbox_height": 22,
-        "hitbox_offset_x": 26,
-        "hitbox_offset_y": 28,
-        "knockback_px": 10,
-        "hitstop_frames": 6,
-    },
     "P1_K_MK": {
-        "damage": 75,
-        "duration_frames": 14,
-        "hitbox_width": 46,
-        "hitbox_height": 22,
-        "hitbox_offset_x": 30,
-        "hitbox_offset_y": 26,
-        "knockback_px": 12,
-        "hitstop_frames": 7,
-    },
-    "P1_L_HK": {
         "damage": 95,
         "duration_frames": 16,
         "hitbox_width": 58,
@@ -138,6 +162,16 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "hitbox_offset_y": 24,
         "knockback_px": 16,
         "hitstop_frames": 8,
+    },
+    "P1_L_HK": {
+        "damage": 75,
+        "duration_frames": 14,
+        "hitbox_width": 46,
+        "hitbox_height": 22,
+        "hitbox_offset_x": 30,
+        "hitbox_offset_y": 26,
+        "knockback_px": 12,
+        "hitstop_frames": 7,
     },
     # P2 default attack (temporary)
     "P2_L_PUNCH": {
@@ -149,6 +183,19 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "hitbox_offset_y": HITBOX_OFFSET_Y,
         "knockback_px": 12,
         "hitstop_frames": HITSTOP_DEFAULT_FRAMES,
+    },
+
+    "RUSH": {
+        "damage": 90,
+        "duration_frames": 18,
+        "hitbox_width": 64,
+        "hitbox_height": 28,
+        "hitbox_offset_x": 42,
+        "hitbox_offset_y": 30,
+        "knockback_px": 18,
+        "hitstop_frames": 8,
+        "recovery_bonus_frames": 10,
+        "attacker_recoil_px": 0,
     },
 }
 
@@ -168,6 +215,20 @@ COLOR_HP_CHIP = (220, 70, 70)
 DEBUG_DRAW_DEFAULT: bool = True
 
 HITSTUN_DEFAULT_FRAMES: int = 20
+
+COMBO_DISPLAY_SECONDS: float = 2.5
+COMBO_DISPLAY_FRAMES: int = int(2.5 * FPS)
+
+HADOKEN_ACTION_ID: int = 6040
+HADOKEN_SPAWN_DELAY_FRAMES: int = 20
+HADOKEN_ACTION_LAST_FRAME_TIME: int = 40
+
+
+def get_damage_multiplier(combo_count: int) -> float:
+    c = max(1, int(combo_count))
+    # 1 hit: 100%, 2+ hits: -10% each, min 10%
+    mul = 1.0 - 0.1 * float(c - 1)
+    return max(0.1, mul)
 
 # Colors (RGB)
 # ここでは見やすさを優先した暫定色を使います。

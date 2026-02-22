@@ -1,62 +1,164 @@
 from __future__ import annotations
 
 from enum import Enum, auto
+import json
 import math
 import importlib.util
+import os
+import random
+import re
 from pathlib import Path
 from typing import Any
 
 import pygame
 
 from src.entities.effect import Effect
+from src.entities.effect import Projectile
+from src.entities.effect import SuperProjectile
 from src.entities.player import Player, PlayerInput
+from src.characters.ryuko import RYUKO
+from src.ui import hud
 from src.utils import constants
+from src.utils.paths import resource_path
 
 
 class GameState(Enum):
     TITLE = auto()
     BATTLE = auto()
+    TRAINING = auto()
+    CHAR_SELECT = auto()
+    RESULT = auto()
 
 
-def _draw_hp_bar(
+def _load_stage_frames() -> list[pygame.Surface]:
+    frames: list[pygame.Surface] = []
+    for name in ("01.png", "02.png", "03.png", "04.png"):
+        p = resource_path(Path("assets/images/stage") / name)
+        if not p.exists():
+            return []
+        try:
+            frames.append(pygame.image.load(str(p)).convert_alpha())
+        except pygame.error:
+            return []
+    return frames
+
+
+def _draw_stage_background(
+    surface: pygame.Surface,
+    *,
+    tick_ms: int,
+    stage_bg_frames: list[pygame.Surface],
+    stage_bg_img: pygame.Surface | None,
+) -> None:
+    bg_img: pygame.Surface | None = None
+    if stage_bg_frames:
+        bg_img = stage_bg_frames[0]
+    else:
+        bg_img = stage_bg_img
+
+    if bg_img is not None:
+        bg = pygame.transform.smoothscale(bg_img, (constants.STAGE_WIDTH, constants.STAGE_HEIGHT))
+        surface.blit(bg, (0, 0))
+
+        dark = pygame.Surface((constants.STAGE_WIDTH, constants.STAGE_HEIGHT), pygame.SRCALPHA)
+        dark.fill((20, 40, 70, 95))
+        surface.blit(dark, (0, 0))
+
+
+def _init_rain_drops(count: int) -> list[dict[str, float]]:
+    drops: list[dict[str, float]] = []
+    for _ in range(max(0, int(count))):
+        drops.append(
+            {
+                "x": float(random.randrange(0, constants.STAGE_WIDTH)),
+                "y": float(random.randrange(-constants.STAGE_HEIGHT, constants.STAGE_HEIGHT)),
+                "vy": float(random.uniform(9.0, 15.0)),
+                "vx": float(random.uniform(-1.0, 0.8)),
+                "len": float(random.uniform(10.0, 18.0)),
+                "a": float(random.uniform(90.0, 150.0)),
+            }
+        )
+    return drops
+
+
+def _update_rain_drops(drops: list[dict[str, float]]) -> None:
+    for d in drops:
+        d["x"] = float(d.get("x", 0.0)) + float(d.get("vx", 0.0))
+        d["y"] = float(d.get("y", 0.0)) + float(d.get("vy", 0.0))
+
+        if d["y"] > float(constants.STAGE_HEIGHT + 30):
+            d["y"] = float(random.uniform(-120.0, -20.0))
+            d["x"] = float(random.randrange(-20, constants.STAGE_WIDTH + 20))
+        if d["x"] < -40:
+            d["x"] = float(constants.STAGE_WIDTH + 40)
+        if d["x"] > float(constants.STAGE_WIDTH + 40):
+            d["x"] = float(-40)
+
+
+def _draw_rain(surface: pygame.Surface, *, drops: list[dict[str, float]]) -> None:
+    if not drops:
+        return
+    rain = pygame.Surface((constants.STAGE_WIDTH, constants.STAGE_HEIGHT), pygame.SRCALPHA)
+    for d in drops:
+        x = int(d.get("x", 0.0))
+        y = int(d.get("y", 0.0))
+        ln = int(d.get("len", 14.0))
+        a = int(max(0, min(255, int(d.get("a", 120.0)))))
+        pygame.draw.line(rain, (170, 210, 255, a), (x, y), (x - 2, y + ln), 1)
+    surface.blit(rain, (0, 0))
+
+
+def _draw_power_gauge(
     surface: pygame.Surface,
     *,
     x: int,
     y: int,
     w: int,
     h: int,
-    hp: float,
-    chip_hp: float,
-    max_hp: float,
+    value: float,
+    max_value: float,
     align_right: bool,
 ) -> None:
-    bg_rect = pygame.Rect(x, y, w, h)
-    pygame.draw.rect(surface, constants.COLOR_HP_BG, bg_rect)
-
-    hp_ratio = 0.0 if max_hp <= 0 else max(0.0, min(1.0, hp / max_hp))
-    chip_ratio = 0.0 if max_hp <= 0 else max(0.0, min(1.0, chip_hp / max_hp))
-
-    hp_w = int(w * hp_ratio)
-    chip_w = int(w * chip_ratio)
-
-    if align_right:
-        chip_rect = pygame.Rect(x + (w - chip_w), y, chip_w, h)
-        fill_rect = pygame.Rect(x + (w - hp_w), y, hp_w, h)
-    else:
-        chip_rect = pygame.Rect(x, y, chip_w, h)
-        fill_rect = pygame.Rect(x, y, hp_w, h)
-
-    pygame.draw.rect(surface, constants.COLOR_HP_CHIP, chip_rect)
-    pygame.draw.rect(surface, constants.COLOR_HP_FILL, fill_rect)
-    pygame.draw.rect(surface, (200, 200, 200), bg_rect, 2)
+    hud.draw_power_gauge(surface, x=x, y=y, w=w, h=h, value=value, max_value=max_value, align_right=align_right)
 
 
 def main() -> None:
     # Pygame 初期化。
     pygame.init()
 
-    project_root = Path(__file__).resolve().parent
-    jp_font_path = project_root / "assets" / "fonts" / "TogeMaruGothic-700-Bold.ttf"
+    def _settings_path() -> Path:
+        # 実行ファイル化（PyInstaller）時でも書き込みできるように、ユーザー領域へ保存する。
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "2D-Fighting-Game" / "settings.json"
+        return Path.home() / ".2d_fighting_game_settings.json"
+
+    def _load_settings() -> dict[str, Any]:
+        p = _settings_path()
+        try:
+            if p.exists():
+                return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {}
+
+    def _save_settings(data: dict[str, Any]) -> None:
+        p = _settings_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    settings = _load_settings()
+    bgm_volume_level = int(settings.get("bgm_volume_level", 70))
+    bgm_volume_level = max(0, min(100, bgm_volume_level))
+
+    se_volume_level = int(settings.get("se_volume_level", 60))
+    se_volume_level = max(0, min(100, se_volume_level))
+
+    project_root = resource_path(".")
+    jp_font_path = resource_path("assets/fonts/TogeMaruGothic-700-Bold.ttf")
     mono_font_name = "consolas"
     if jp_font_path.exists():
         font = pygame.font.Font(str(jp_font_path), 28)
@@ -82,6 +184,44 @@ def main() -> None:
                 if isinstance(clsn1, list) or isinstance(clsn2, list):
                     return True
         return False
+
+    def _inject_special_actions(actions: list[dict[str, Any]]) -> None:
+        # 波動拳（6040）/真空波動拳（6050）を、PNG連番を再生できるように補助的に注入する。
+        hadoken_action_id = int(getattr(constants, "HADOKEN_ACTION_ID", 6040))
+        last_time = int(getattr(constants, "HADOKEN_ACTION_LAST_FRAME_TIME", 40))
+        if not any(isinstance(a, dict) and int(a.get("action", -1)) == hadoken_action_id for a in actions):
+            actions.append(
+                {
+                    "action": hadoken_action_id,
+                    "frames": [
+                        {"group": hadoken_action_id, "index": 1, "x": 0, "y": 0, "time": 3, "flags": [], "clsn1": [], "clsn2": []},
+                        {"group": hadoken_action_id, "index": 2, "x": 0, "y": 0, "time": 3, "flags": [], "clsn1": [], "clsn2": []},
+                        {"group": hadoken_action_id, "index": 3, "x": 0, "y": 0, "time": last_time, "flags": [], "clsn1": [], "clsn2": []},
+                    ],
+                }
+            )
+
+        shinku_action_id = int(getattr(constants, "SHINKU_HADOKEN_ACTION_ID", 8000))
+        start_i = int(getattr(constants, "SHINKU_HADOKEN_MOTION_START_INDEX", 1))
+        end_i = int(getattr(constants, "SHINKU_HADOKEN_MOTION_END_INDEX", 6))
+        if not any(isinstance(a, dict) and int(a.get("action", -1)) == shinku_action_id for a in actions):
+            frames: list[dict[str, Any]] = []
+            for idx in range(start_i, end_i + 1):
+                frames.append(
+                    {
+                        "group": shinku_action_id,
+                        "index": idx,
+                        "x": 0,
+                        "y": 0,
+                        "time": 3,
+                        "flags": [],
+                        "clsn1": [],
+                        "clsn2": [],
+                    }
+                )
+            if frames:
+                frames[-1]["time"] = 12
+            actions.append({"action": shinku_action_id, "frames": frames})
 
     def _patch_action400_startup(actions: list[dict[str, Any]]) -> None:
         # Action 400（Jキー小キック）の発生を「入力から4フレーム目」に合わせるため、
@@ -150,14 +290,17 @@ def main() -> None:
 
     # プレイヤー生成。
     # Phase 1 は「塗りつぶし矩形」だけでキャラクターを表現する。
-    p1 = Player(x=150, color=constants.COLOR_P1)
-    p2 = Player(x=constants.STAGE_WIDTH - 200, color=constants.COLOR_P2)
+    p1 = Player(x=150, color=constants.COLOR_P1, character=RYUKO)
+    p2 = Player(x=constants.STAGE_WIDTH - 200, color=constants.COLOR_P2, character=RYUKO)
+
+    loaded_actions: list[dict[str, Any]] | None = None
+    actions_by_id: dict[int, dict[str, Any]] = {}
 
     # MUGENの AIR（ACTIONS）と、整理済みPNG（organized）を読み込む。
     # 読み込みに失敗した場合でもゲームは起動でき、従来の矩形描画にフォールバックする。
     try:
-        air_py = project_root / "assets" / "images" / "RYUKO2nd" / "ryuko_air_actions.py"
-        sprites_root = project_root / "assets" / "images" / "RYUKO2nd" / "organized"
+        air_py = resource_path("assets/images/RYUKO2nd/ryuko_air_actions.py")
+        sprites_root = resource_path("assets/images/RYUKO2nd/organized")
 
         spec = importlib.util.spec_from_file_location("ryuko_air_actions", str(air_py))
         if spec is not None and spec.loader is not None:
@@ -166,9 +309,11 @@ def main() -> None:
             actions = getattr(module, "ACTIONS", None)
             if isinstance(actions, list):
                 _patch_action400_startup(actions)
+
+                _inject_special_actions(actions)
                 if not _actions_have_frame_clsns(actions):
-                    air_parser_py = project_root / "scripts" / "organize_ryuko2nd_assets.py"
-                    air_file = project_root / "assets" / "images" / "RYUKO2nd" / "RYUKO.AIR"
+                    air_parser_py = resource_path("scripts/organize_ryuko2nd_assets.py")
+                    air_file = resource_path("assets/images/RYUKO2nd/RYUKO.AIR")
                     parser_spec = importlib.util.spec_from_file_location("ryuko_air_parser", str(air_parser_py))
                     if parser_spec is not None and parser_spec.loader is not None:
                         parser_module = importlib.util.module_from_spec(parser_spec)
@@ -179,6 +324,9 @@ def main() -> None:
                             if isinstance(parsed_actions, list):
                                 actions = parsed_actions
                                 _patch_action400_startup(actions)
+                                _inject_special_actions(actions)
+                loaded_actions = actions
+                actions_by_id = {int(a.get("action")): a for a in actions if isinstance(a, dict) and "action" in a}
                 p1.set_mugen_animation(actions=actions, sprites_root=sprites_root)
                 p2.set_mugen_animation(actions=actions, sprites_root=sprites_root)
     except Exception:
@@ -187,8 +335,8 @@ def main() -> None:
     # ヒットエフェクト（火花）読み込み。
     # 連番PNGを置いたフォルダをここで指定する。
     spark_folder_candidates = [
-        project_root / "assets" / "images" / "RYUKO2nd" / "organized" / "other" / "hit_spark",
-        project_root / "assets" / "effects" / "hit_spark",
+        resource_path("assets/images/RYUKO2nd/organized/other/hit_spark"),
+        resource_path("assets/effects/hit_spark"),
     ]
     spark_frames: list[pygame.Surface] = []
     for folder in spark_folder_candidates:
@@ -208,6 +356,139 @@ def main() -> None:
             break
 
     effects: list[Effect] = []
+    projectiles: list[Projectile] = []
+
+    hadoken_proj_frames: list[pygame.Surface] | None = None
+    try:
+        hadoken_proj_frames = []
+        for idx in range(4, 10):
+            key = (6040, idx)
+            img = getattr(p1, "_sprites", {}).get(key)
+            if img is None:
+                img = getattr(p2, "_sprites", {}).get(key)
+            if img is not None:
+                hadoken_proj_frames.append(img)
+        if not hadoken_proj_frames:
+            hadoken_proj_frames = None
+    except Exception:
+        hadoken_proj_frames = None
+
+    if hadoken_proj_frames is None:
+        hadoken_proj_frames = Projectile.load_frames_any(
+            png_path=Path("assets/images/hadoken.png"),
+            folder=Path("assets/images/hadoken"),
+        )
+    if hadoken_proj_frames is None and spark_frames:
+        hadoken_proj_frames = spark_frames
+
+    def _scale_frames(frames: list[pygame.Surface] | None, *, scale: float) -> list[pygame.Surface] | None:
+        if frames is None:
+            return None
+        out: list[pygame.Surface] = []
+        s = float(scale)
+        for img in frames:
+            w = max(1, int(round(img.get_width() * s)))
+            h = max(1, int(round(img.get_height() * s)))
+            out.append(pygame.transform.smoothscale(img, (w, h)))
+        return out
+
+    hadoken_proj_frames = _scale_frames(hadoken_proj_frames, scale=0.85)
+
+    shinku_proj_frames: list[pygame.Surface] | None = None
+    try:
+        proj_group = int(getattr(constants, "SHINKU_HADOKEN_PROJECTILE_GROUP_ID", 8001))
+        proj_start = int(getattr(constants, "SHINKU_HADOKEN_PROJECTILE_START_INDEX", 1))
+        proj_end = int(getattr(constants, "SHINKU_HADOKEN_PROJECTILE_END_INDEX", 7))
+        shinku_proj_frames = []
+        for idx in range(proj_start, proj_end + 1):
+            key = (proj_group, idx)
+            img = getattr(p1, "_sprites", {}).get(key)
+            if img is None:
+                img = getattr(p2, "_sprites", {}).get(key)
+            if img is not None:
+                shinku_proj_frames.append(img)
+        if not shinku_proj_frames:
+            shinku_proj_frames = None
+    except Exception:
+        shinku_proj_frames = None
+
+    if shinku_proj_frames is None and spark_frames:
+        shinku_proj_frames = spark_frames
+
+    shinku_proj_frames = _scale_frames(shinku_proj_frames, scale=0.80)
+
+    rush_dust_frames: list[pygame.Surface] = []
+    try:
+        rush_dust_frames = []
+        for idx in range(1, 9):
+            key = (6521, idx)
+            img = getattr(p1, "_sprites", {}).get(key)
+            if img is None:
+                img = getattr(p2, "_sprites", {}).get(key)
+            if img is not None:
+                rush_dust_frames.append(img)
+        if not rush_dust_frames:
+            base = resource_path("assets/images/RYUKO2nd/organized/hit")
+            candidates = sorted(base.glob("*_6521-*.png"))
+
+            def _suffix(p: Path) -> int:
+                m = re.search(r"6521-(\d+)", p.name)
+                if m:
+                    try:
+                        return int(m.group(1))
+                    except ValueError:
+                        return 0
+                return 0
+
+            candidates = sorted(candidates, key=_suffix)
+            for p in candidates:
+                try:
+                    rush_dust_frames.append(pygame.image.load(str(p)).convert_alpha())
+                except pygame.error:
+                    continue
+    except Exception:
+        rush_dust_frames = []
+
+    def _spawn_hadoken(attacker: Player) -> None:
+        side = 1 if attacker is p1 else 2
+        x = float(attacker.rect.centerx + attacker.facing * 34)
+        y = float(attacker.rect.centery - 10)
+        vx = float(attacker.facing * 8)
+        projectiles.append(
+            Projectile(
+                pos=pygame.Vector2(x, y),
+                vel=pygame.Vector2(vx, 0.0),
+                owner_side=side,
+                radius=8,
+                frames_left=90,
+                damage=55,
+                hitstun_frames=20,
+                frames=hadoken_proj_frames,
+                frames_per_image=3,
+            )
+        )
+
+    def _spawn_shinku(attacker: Player) -> None:
+        side = 1 if attacker is p1 else 2
+        x = float(attacker.rect.centerx + attacker.facing * 44)
+        y = float(attacker.rect.centery - 18)
+        vx = float(attacker.facing * 6)
+        projectiles.append(
+            SuperProjectile(
+                pos=pygame.Vector2(x, y),
+                vel=pygame.Vector2(vx, 0.0),
+                owner_side=side,
+                radius=12,
+                frames_left=120,
+                damage=35,
+                hitstun_frames=12,
+                frames=shinku_proj_frames,
+                frames_per_image=2,
+                hit_interval_frames=4,
+                max_hits=5,
+                push_on_hit_px=3,
+            )
+        )
 
     # 判定枠線（Hurtbox/Pushbox/Hitbox）を描画するかどうか。
     # F3 で切り替える。
@@ -216,29 +497,153 @@ def main() -> None:
     # ESC で表示する簡易メニュー。
     menu_open = False
     menu_selection = 0
+    cmdlist_open = False
+    cmdlist_selection = 0
+    cmdlist_preview_start_ms = 0
+    cmdlist_closing = False
+    cmdlist_close_start_ms = 0
+
+    cmdlist_items: list[tuple[str, int]] = [
+        ("U: 弱パンチ", 400),
+        ("I: 中パンチ", 200),
+        ("O: 強パンチ", 210),
+        ("J: 弱キック", 229),
+        ("K: 中キック", 430),
+        ("L: 強キック", 410),
+        ("↓↘→+P: 波動拳", 6040),
+        ("↓↘→↓↘→+P: 真空波動拳", int(getattr(constants, "SHINKU_HADOKEN_ACTION_ID", 8000))),
+        ("←↙↓+K: 突進", 6520),
+        ("メニューに戻る", -1),
+    ]
+
+    def _get_preview_sprite_key(action_id: int, *, elapsed_frames: int) -> tuple[int, int] | None:
+        # 突進(6520)はゲーム中もスプライト固定描画なので、プレビューも確実に出す。
+        if int(action_id) == 6520:
+            startup = int(getattr(constants, "RUSH_STARTUP_FRAMES", 6))
+            if int(elapsed_frames) < max(1, startup):
+                return (6520, 1)
+            return (6520, 2)
+
+        a = actions_by_id.get(int(action_id))
+        if not a:
+            return None
+        frames = a.get("frames", [])
+        if not isinstance(frames, list) or not frames:
+            return None
+
+        total = 0
+        for fr in frames:
+            if not isinstance(fr, dict):
+                continue
+            t = int(fr.get("time", 0))
+            if t <= 0:
+                continue
+            total += t
+        if total <= 0:
+            fr0 = frames[0] if isinstance(frames[0], dict) else None
+            if not fr0:
+                return None
+            try:
+                return (int(fr0.get("group", 0)), int(fr0.get("index", 0)))
+            except (TypeError, ValueError):
+                return None
+
+        f = int(elapsed_frames) % int(total)
+        acc = 0
+        for fr in frames:
+            if not isinstance(fr, dict):
+                continue
+            t = int(fr.get("time", 0))
+            if t <= 0:
+                continue
+            acc += t
+            if f < acc:
+                group = fr.get("group")
+                index = fr.get("index")
+                sprite = fr.get("sprite")
+                if group is not None and index is not None:
+                    try:
+                        return (int(group), int(index))
+                    except (TypeError, ValueError):
+                        return None
+                if isinstance(sprite, (tuple, list)) and len(sprite) >= 2:
+                    try:
+                        return (int(sprite[0]), int(sprite[1]))
+                    except (TypeError, ValueError):
+                        return None
+                return None
+        return None
+
+    def _start_cmdlist_close() -> None:
+        nonlocal cmdlist_closing, cmdlist_close_start_ms, cmdlist_preview_start_ms
+        if cmdlist_closing:
+            return
+        cmdlist_closing = True
+        cmdlist_close_start_ms = pygame.time.get_ticks()
+        cmdlist_preview_start_ms = cmdlist_close_start_ms
 
     # タイトル画面とバトル画面の状態管理。
     game_state = GameState.TITLE
     title_start_keys = {pygame.K_u, pygame.K_i, pygame.K_o, pygame.K_j, pygame.K_k, pygame.K_l}
-    title_menu_items = ["BATTLE", "SETTING", "EXIT"]
+    title_menu_items = ["BATTLE", "TRAINING", "SETTING", "EXIT"]
     title_menu_selection = 0
 
-    title_bg_img: pygame.Surface | None = None
-    for pattern in (
-        "assets/images/RYUKO2nd/organized/stand/*.png",
-        "assets/images/RYUKO2nd/organized/**/*.png",
-    ):
-        candidates = sorted(project_root.glob(pattern))
-        if not candidates:
-            continue
+    char_select_items = ["P2", "START", "BACK"]
+    char_select_selection = 0
+    char_select_p2_cpu: bool = True
+    char_select_thumb: pygame.Surface | None = None
+
+    result_menu_items = ["rematch", "back_to_title", "exit"]
+    result_menu_selection = 0
+    result_winner_side: int | None = None
+    result_bg_frames: list[pygame.Surface] = []
+    result_anim_counter: int = 0
+
+    round_timer_frames_left: int | None = None
+
+    p1_round_wins: int = 0
+    p2_round_wins: int = 0
+    round_over_frames_left: int = 0
+    round_over_winner_side: int | None = None
+
+    battle_countdown_frames_left: int = 0
+    battle_countdown_last_announce: int | None = None
+
+    stage_bg_img: pygame.Surface | None = None
+    stage_bg_path = resource_path("assets/images/stage/01.png")
+    if stage_bg_path.exists():
         try:
-            title_bg_img = pygame.image.load(str(candidates[0])).convert_alpha()
-            break
+            stage_bg_img = pygame.image.load(str(stage_bg_path)).convert_alpha()
+        except pygame.error:
+            stage_bg_img = None
+
+    stage_bg_frames: list[pygame.Surface] = []
+    rain_drops = _init_rain_drops(90)
+
+    title_bg_img: pygame.Surface | None = None
+    preferred_title_bg = resource_path("assets/images/Gemini_Generated_Image_897hvv897hvv897h.png")
+    if preferred_title_bg.exists():
+        try:
+            title_bg_img = pygame.image.load(str(preferred_title_bg)).convert_alpha()
         except pygame.error:
             title_bg_img = None
+
+    if title_bg_img is None:
+        for pattern in (
+            "assets/images/RYUKO2nd/organized/stand/*.png",
+            "assets/images/RYUKO2nd/organized/**/*.png",
+        ):
+            candidates = sorted(resource_path(".").glob(pattern))
+            if not candidates:
+                continue
+            try:
+                title_bg_img = pygame.image.load(str(candidates[0])).convert_alpha()
+                break
+            except pygame.error:
+                title_bg_img = None
     start_se: pygame.mixer.Sound | None = None
     for rel in ("start.wav", "start.ogg", "start.mp3"):
-        se_path = project_root / "assets" / "sounds" / rel
+        se_path = resource_path(Path("assets/sounds") / rel)
         if not se_path.exists():
             continue
         try:
@@ -247,6 +652,134 @@ def main() -> None:
         except pygame.error:
             pass
 
+    menu_confirm_se: pygame.mixer.Sound | None = None
+    menu_confirm_path = resource_path(Path("assets/sounds/SE/決定ボタンを押す15.mp3"))
+    if menu_confirm_path.exists():
+        try:
+            menu_confirm_se = pygame.mixer.Sound(str(menu_confirm_path))
+        except pygame.error:
+            menu_confirm_se = None
+
+    menu_move_se: pygame.mixer.Sound | None = None
+    menu_move_path = resource_path(Path("assets/sounds/SE/カーソル移動8.mp3"))
+    if menu_move_path.exists():
+        try:
+            menu_move_se = pygame.mixer.Sound(str(menu_move_path))
+        except pygame.error:
+            menu_move_se = None
+
+    countdown_se_3: pygame.mixer.Sound | None = None
+    countdown_se_2: pygame.mixer.Sound | None = None
+    countdown_se_1: pygame.mixer.Sound | None = None
+    countdown_se_go: pygame.mixer.Sound | None = None
+    for _var, _name in (
+        ("countdown_se_3", "「3」.mp3"),
+        ("countdown_se_2", "「2」.mp3"),
+        ("countdown_se_1", "「1」.mp3"),
+        ("countdown_se_go", "「ゴー」.mp3"),
+    ):
+        p = resource_path(Path("assets/sounds/SE") / _name)
+        if not p.exists():
+            continue
+        try:
+            s = pygame.mixer.Sound(str(p))
+        except pygame.error:
+            s = None
+        if _var == "countdown_se_3":
+            countdown_se_3 = s
+        elif _var == "countdown_se_2":
+            countdown_se_2 = s
+        elif _var == "countdown_se_1":
+            countdown_se_1 = s
+        elif _var == "countdown_se_go":
+            countdown_se_go = s
+
+    beam_se: pygame.mixer.Sound | None = None
+    beam_se_path = resource_path(Path("assets/sounds/SE/ビーム改.mp3"))
+    if beam_se_path.exists():
+        try:
+            beam_se = pygame.mixer.Sound(str(beam_se_path))
+        except pygame.error:
+            beam_se = None
+
+    hit_se: pygame.mixer.Sound | None = None
+    hit_se_path = resource_path(Path("assets/sounds/SE/打撃1.mp3"))
+    if hit_se_path.exists():
+        try:
+            hit_se = pygame.mixer.Sound(str(hit_se_path))
+        except pygame.error:
+            hit_se = None
+
+    def _apply_se_volume() -> None:
+        vol = max(0.0, min(1.0, float(se_volume_level) / 100.0))
+        try:
+            if start_se is not None:
+                start_se.set_volume(0.50 * vol)
+            if menu_confirm_se is not None:
+                menu_confirm_se.set_volume(0.55 * vol)
+            if menu_move_se is not None:
+                menu_move_se.set_volume(0.45 * vol)
+            if countdown_se_3 is not None:
+                countdown_se_3.set_volume(0.22 * vol)
+            if countdown_se_2 is not None:
+                countdown_se_2.set_volume(0.22 * vol)
+            if countdown_se_1 is not None:
+                countdown_se_1.set_volume(0.22 * vol)
+            if countdown_se_go is not None:
+                countdown_se_go.set_volume(0.25 * vol)
+            if beam_se is not None:
+                beam_se.set_volume(0.40 * vol)
+            if hit_se is not None:
+                hit_se.set_volume(0.18 * vol)
+        except Exception:
+            pass
+
+    title_bgm_path = resource_path(Path("assets/sounds/BGM/Revenger.mp3"))
+    battle_bgm_path = resource_path(Path("assets/sounds/BGM/Who_Is_the_Champion.mp3"))
+
+    def _apply_bgm_volume() -> None:
+        try:
+            pygame.mixer.music.set_volume(float(bgm_volume_level) / 100.0)
+        except Exception:
+            pass
+
+    _apply_se_volume()
+
+    def _play_bgm(path: Path) -> None:
+        if not path.exists():
+            return
+        try:
+            pygame.mixer.music.load(str(path))
+            _apply_bgm_volume()
+            pygame.mixer.music.play(-1)
+        except Exception:
+            pass
+
+    current_bgm: str | None = None
+
+    def _ensure_bgm_for_state(state: GameState) -> None:
+        nonlocal current_bgm
+        if state == GameState.TITLE:
+            want = str(title_bgm_path)
+            if current_bgm != want:
+                _play_bgm(title_bgm_path)
+                current_bgm = want
+        elif state in {GameState.BATTLE, GameState.TRAINING}:
+            want = str(battle_bgm_path)
+            if current_bgm != want:
+                _play_bgm(battle_bgm_path)
+                current_bgm = want
+        elif state == GameState.CHAR_SELECT:
+            want = str(title_bgm_path)
+            if current_bgm != want:
+                _play_bgm(title_bgm_path)
+                current_bgm = want
+        elif state == GameState.RESULT:
+            want = str(title_bgm_path)
+            if current_bgm != want:
+                _play_bgm(title_bgm_path)
+                current_bgm = want
+
     # “押した瞬間だけ True” にしたい入力は、KEYDOWN でトリガを立てて
     # フレームの先頭で False に戻す（エッジ入力）。
     p1_jump_pressed = False
@@ -254,9 +787,20 @@ def main() -> None:
     p1_attack_id: str | None = None
     p2_attack_id: str | None = None
 
+    p1_key_history: list[str] = []
+
     # HPバー用の「赤チップ残り」値（見た目用）。
     p1_chip_hp: float = float(p1.max_hp)
     p2_chip_hp: float = float(p2.max_hp)
+
+    super_freeze_frames_left: int = 0
+    super_freeze_attacker_side: int = 0
+
+    cpu_enabled_battle: bool = True
+    cpu_decision_frames_left: int = 0
+    cpu_attack_cooldown: int = 0
+    cpu_jump_cooldown: int = 0
+    cpu_special_cooldown: int = 0
 
     def _apply_resolution(size: tuple[int, int]) -> None:
         nonlocal screen
@@ -273,7 +817,7 @@ def main() -> None:
         # デバッグ用の「試合リセット」。
         # - 位置、速度、HP、攻撃/ヒットストップ等を初期化する。
         # - debug_draw（F3 のON/OFF）は維持する。
-        nonlocal p1_chip_hp, p2_chip_hp
+        nonlocal p1_chip_hp, p2_chip_hp, round_timer_frames_left, battle_countdown_frames_left, battle_countdown_last_announce
 
         p1.pos_x = float(150 + (p1.rect.width // 2))
         p2.pos_x = float((constants.STAGE_WIDTH - 200) + (p2.rect.width // 2))
@@ -291,10 +835,25 @@ def main() -> None:
         p1.crouching = False
         p2.crouching = False
 
+        p1.reset_round_state()
+        p2.reset_round_state()
+
         p1.hp = p1.max_hp
         p2.hp = p2.max_hp
         p1_chip_hp = float(p1.max_hp)
         p2_chip_hp = float(p2.max_hp)
+
+        if game_state == GameState.BATTLE:
+            round_timer_frames_left = int(constants.FPS * 99)
+            battle_countdown_frames_left = int(constants.FPS * 3)
+            battle_countdown_last_announce = None
+        elif game_state == GameState.TRAINING:
+            round_timer_frames_left = None
+            battle_countdown_frames_left = 0
+            battle_countdown_last_announce = None
+
+        round_over_frames_left = 0
+        round_over_winner_side = None
 
         p1.hitstop_frames_left = 0
         p2.hitstop_frames_left = 0
@@ -307,6 +866,8 @@ def main() -> None:
 
     _apply_resolution((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
     reset_match()
+
+    _ensure_bgm_for_state(game_state)
 
     running = True
     while running:
@@ -322,70 +883,349 @@ def main() -> None:
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F3:
-                    debug_draw = not debug_draw
+                    if game_state == GameState.TRAINING:
+                        debug_draw = not debug_draw
                     continue
+
+                if game_state == GameState.RESULT:
+                    if event.key == pygame.K_ESCAPE:
+                        game_state = GameState.TITLE
+                        menu_open = False
+                        cmdlist_open = False
+                        p1_round_wins = 0
+                        p2_round_wins = 0
+                        result_winner_side = None
+                        result_anim_counter = 0
+                        reset_match()
+                        effects.clear()
+                        projectiles.clear()
+                        _ensure_bgm_for_state(game_state)
+                        continue
+
+                    if event.key in {pygame.K_UP, pygame.K_w}:
+                        result_menu_selection = (result_menu_selection - 1) % len(result_menu_items)
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                        continue
+                    if event.key in {pygame.K_DOWN, pygame.K_s}:
+                        result_menu_selection = (result_menu_selection + 1) % len(result_menu_items)
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                        continue
+
+                    if event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                        if menu_confirm_se is not None:
+                            menu_confirm_se.play()
+
+                        selected = result_menu_items[result_menu_selection]
+                        if selected == "rematch":
+                            game_state = GameState.BATTLE
+                            debug_draw = False
+                            menu_open = False
+                            cmdlist_open = False
+                            p1_round_wins = 0
+                            p2_round_wins = 0
+                            result_winner_side = None
+                            result_anim_counter = 0
+                            reset_match()
+                            effects.clear()
+                            projectiles.clear()
+                            _ensure_bgm_for_state(game_state)
+                        elif selected == "back_to_title":
+                            game_state = GameState.TITLE
+                            menu_open = False
+                            cmdlist_open = False
+                            p1_round_wins = 0
+                            p2_round_wins = 0
+                            result_winner_side = None
+                            result_anim_counter = 0
+                            reset_match()
+                            effects.clear()
+                            projectiles.clear()
+                            _ensure_bgm_for_state(game_state)
+                        elif selected == "exit":
+                            running = False
+                        continue
+
+                if event.key == pygame.K_n and game_state in {GameState.BATTLE, GameState.TRAINING}:
+                    super_cost = int(getattr(constants, "POWER_GAUGE_SUPER_COST", 500))
+                    p1.power_gauge = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                    if p1.spend_power(super_cost):
+                        p1.start_shinku_hadoken()
+                        if beam_se is not None:
+                            beam_se.play()
+                        super_freeze_frames_left = int(getattr(constants, "SUPER_FREEZE_FRAMES", 30))
+                        super_freeze_attacker_side = 1
+                    continue
+
+                if event.key in {
+                    pygame.K_a,
+                    pygame.K_s,
+                    pygame.K_d,
+                    pygame.K_w,
+                    pygame.K_u,
+                    pygame.K_i,
+                    pygame.K_o,
+                    pygame.K_j,
+                    pygame.K_k,
+                    pygame.K_l,
+                }:
+                    name_map = {
+                        pygame.K_a: "←",
+                        pygame.K_s: "↓",
+                        pygame.K_d: "→",
+                        pygame.K_w: "↑",
+                        pygame.K_u: "P",
+                        pygame.K_i: "P",
+                        pygame.K_o: "P",
+                        pygame.K_j: "J",
+                        pygame.K_k: "K",
+                        pygame.K_l: "L",
+                    }
+                    p1_key_history.insert(0, name_map.get(event.key, str(event.key)))
+                    p1_key_history = p1_key_history[:16]
 
                 if game_state == GameState.TITLE and menu_open:
                     if event.key == pygame.K_ESCAPE:
                         menu_open = False
-                    elif event.key == pygame.K_UP:
-                        menu_selection = (menu_selection - 1) % 2
-                    elif event.key == pygame.K_DOWN:
-                        menu_selection = (menu_selection + 1) % 2
-                    elif event.key == pygame.K_LEFT:
+                    elif event.key in {pygame.K_UP, pygame.K_w}:
+                        menu_selection = (menu_selection - 1) % 4
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                        menu_selection = (menu_selection + 1) % 4
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key in {pygame.K_LEFT, pygame.K_a}:
                         if menu_selection == 0:
                             current_res_index = (current_res_index - 1) % len(resolutions)
-                    elif event.key == pygame.K_RIGHT:
+                        elif menu_selection == 1:
+                            bgm_volume_level = max(0, bgm_volume_level - 1)
+                            settings["bgm_volume_level"] = int(bgm_volume_level)
+                            _save_settings(settings)
+                            _apply_bgm_volume()
+                        elif menu_selection == 2:
+                            se_volume_level = max(0, se_volume_level - 1)
+                            settings["se_volume_level"] = int(se_volume_level)
+                            _save_settings(settings)
+                            _apply_se_volume()
+                    elif event.key in {pygame.K_RIGHT, pygame.K_d}:
                         if menu_selection == 0:
                             current_res_index = (current_res_index + 1) % len(resolutions)
-                    elif event.key == pygame.K_RETURN:
+                        elif menu_selection == 1:
+                            bgm_volume_level = min(100, bgm_volume_level + 1)
+                            settings["bgm_volume_level"] = int(bgm_volume_level)
+                            _save_settings(settings)
+                            _apply_bgm_volume()
+                        elif menu_selection == 2:
+                            se_volume_level = min(100, se_volume_level + 1)
+                            settings["se_volume_level"] = int(se_volume_level)
+                            _save_settings(settings)
+                            _apply_se_volume()
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                        if menu_confirm_se is not None:
+                            menu_confirm_se.play()
                         if menu_selection == 0:
                             _apply_resolution(resolutions[current_res_index])
                             reset_match()
-                        elif menu_selection == 1:
+                        elif menu_selection == 3:
                             menu_open = False
                     continue
 
                 if game_state == GameState.TITLE:
-                    if event.key == pygame.K_UP:
+                    if event.key in {pygame.K_UP, pygame.K_w}:
                         title_menu_selection = (title_menu_selection - 1) % len(title_menu_items)
-                    elif event.key == pygame.K_DOWN:
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key in {pygame.K_DOWN, pygame.K_s}:
                         title_menu_selection = (title_menu_selection + 1) % len(title_menu_items)
-                    elif event.key == pygame.K_RETURN or event.key in title_start_keys:
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_u or event.key in title_start_keys:
+                        if menu_confirm_se is not None:
+                            menu_confirm_se.play()
                         selected = title_menu_items[title_menu_selection]
                         if selected == "BATTLE":
                             if start_se is not None:
                                 start_se.play()
-                            game_state = GameState.BATTLE
+                            game_state = GameState.CHAR_SELECT
+                            debug_draw = False
                             menu_open = False
+                            cmdlist_open = False
+                            char_select_selection = 0
+                            char_select_p2_cpu = True
+                            _ensure_bgm_for_state(game_state)
+                        elif selected == "TRAINING":
+                            if start_se is not None:
+                                start_se.play()
+                            game_state = GameState.TRAINING
+                            debug_draw = True
+                            menu_open = False
+                            p1_round_wins = 0
+                            p2_round_wins = 0
+                            result_winner_side = None
+                            result_menu_selection = 0
                             reset_match()
+                            _ensure_bgm_for_state(game_state)
                         elif selected == "SETTING":
                             menu_open = True
-                            menu_selection = 0
                         elif selected == "EXIT":
                             running = False
                     continue
+
+                if game_state == GameState.CHAR_SELECT:
+                    if event.key == pygame.K_ESCAPE:
+                        game_state = GameState.TITLE
+                        menu_open = False
+                        cmdlist_open = False
+                        _ensure_bgm_for_state(game_state)
+                        continue
+
+                    if event.key in {pygame.K_UP, pygame.K_w}:
+                        char_select_selection = (char_select_selection - 1) % len(char_select_items)
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                        continue
+                    if event.key in {pygame.K_DOWN, pygame.K_s}:
+                        char_select_selection = (char_select_selection + 1) % len(char_select_items)
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                        continue
+
+                    if event.key in {pygame.K_LEFT, pygame.K_RIGHT, pygame.K_a, pygame.K_d}:
+                        if char_select_items[char_select_selection] == "P2":
+                            char_select_p2_cpu = not bool(char_select_p2_cpu)
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        continue
+
+                    if event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                        if menu_confirm_se is not None:
+                            menu_confirm_se.play()
+
+                        sel = char_select_items[char_select_selection]
+                        if sel == "START":
+                            cpu_enabled_battle = bool(char_select_p2_cpu)
+                            game_state = GameState.BATTLE
+                            menu_open = False
+                            cmdlist_open = False
+                            p1_round_wins = 0
+                            p2_round_wins = 0
+                            result_winner_side = None
+                            result_menu_selection = 0
+                            reset_match()
+                            _ensure_bgm_for_state(game_state)
+                        elif sel == "BACK":
+                            game_state = GameState.TITLE
+                            menu_open = False
+                            cmdlist_open = False
+                            _ensure_bgm_for_state(game_state)
+                        elif sel == "P2":
+                            char_select_p2_cpu = not bool(char_select_p2_cpu)
+                        continue
 
                 if event.key == pygame.K_r:
                     reset_match()
                 elif event.key == pygame.K_ESCAPE:
                     menu_open = not menu_open
+                    if not menu_open:
+                        cmdlist_open = False
                 elif menu_open:
-                    if event.key == pygame.K_UP:
-                        menu_selection = (menu_selection - 1) % 2
-                    elif event.key == pygame.K_DOWN:
-                        menu_selection = (menu_selection + 1) % 2
-                    elif event.key == pygame.K_LEFT:
+                    if game_state in {GameState.BATTLE, GameState.TRAINING} and cmdlist_open:
+                        if cmdlist_closing:
+                            continue
+                        if event.key in {pygame.K_UP, pygame.K_w}:
+                            cmdlist_selection = (cmdlist_selection - 1) % max(1, len(cmdlist_items))
+                            cmdlist_preview_start_ms = pygame.time.get_ticks()
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                            cmdlist_selection = (cmdlist_selection + 1) % max(1, len(cmdlist_items))
+                            cmdlist_preview_start_ms = pygame.time.get_ticks()
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                            _label, aid = cmdlist_items[cmdlist_selection]
+                            if int(aid) < 0:
+                                _start_cmdlist_close()
+                            else:
+                                cmdlist_preview_start_ms = pygame.time.get_ticks()
+                            if menu_confirm_se is not None:
+                                menu_confirm_se.play()
+                        elif event.key == pygame.K_ESCAPE:
+                            _start_cmdlist_close()
+                        continue
+
+                    if game_state in {GameState.BATTLE, GameState.TRAINING}:
+                        _items = [
+                            "res",
+                            "bgm",
+                            "se",
+                            "cmdlist",
+                            "back",
+                            "close",
+                        ]
+                    else:
+                        _items = [
+                            "res",
+                            "bgm",
+                            "se",
+                            "close",
+                        ]
+                    menu_item_count = len(_items)
+                    if event.key in {pygame.K_UP, pygame.K_w}:
+                        menu_selection = (menu_selection - 1) % menu_item_count
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                        menu_selection = (menu_selection + 1) % menu_item_count
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif event.key in {pygame.K_LEFT, pygame.K_a}:
                         if menu_selection == 0:
                             current_res_index = (current_res_index - 1) % len(resolutions)
-                    elif event.key == pygame.K_RIGHT:
+                        elif menu_selection == 1:
+                            bgm_volume_level = max(0, bgm_volume_level - 1)
+                            settings["bgm_volume_level"] = int(bgm_volume_level)
+                            _save_settings(settings)
+                            _apply_bgm_volume()
+                        elif menu_selection == 2:
+                            se_volume_level = max(0, se_volume_level - 1)
+                            settings["se_volume_level"] = int(se_volume_level)
+                            _save_settings(settings)
+                            _apply_se_volume()
+                    elif event.key in {pygame.K_RIGHT, pygame.K_d}:
                         if menu_selection == 0:
                             current_res_index = (current_res_index + 1) % len(resolutions)
-                    elif event.key == pygame.K_RETURN:
+                        elif menu_selection == 1:
+                            bgm_volume_level = min(100, bgm_volume_level + 1)
+                            settings["bgm_volume_level"] = int(bgm_volume_level)
+                            _save_settings(settings)
+                            _apply_bgm_volume()
+                        elif menu_selection == 2:
+                            se_volume_level = min(100, se_volume_level + 1)
+                            settings["se_volume_level"] = int(se_volume_level)
+                            _save_settings(settings)
+                            _apply_se_volume()
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                        if menu_confirm_se is not None:
+                            menu_confirm_se.play()
                         if menu_selection == 0:
                             _apply_resolution(resolutions[current_res_index])
                             reset_match()
-                        elif menu_selection == 1:
+                        elif menu_selection == 3 and game_state in {GameState.BATTLE, GameState.TRAINING}:
+                            cmdlist_open = True
+                            cmdlist_selection = 0
+                            cmdlist_preview_start_ms = pygame.time.get_ticks()
+                            cmdlist_closing = False
+                        elif menu_selection == 4 and game_state in {GameState.BATTLE, GameState.TRAINING}:
+                            game_state = GameState.TITLE
+                            menu_open = False
+                            reset_match()
+                            effects.clear()
+                            projectiles.clear()
+                            _ensure_bgm_for_state(game_state)
+                        elif menu_selection == (menu_item_count - 1):
                             menu_open = False
                 elif event.key == pygame.K_w:
                     p1_jump_pressed = True
@@ -406,8 +1246,181 @@ def main() -> None:
                 elif event.key == pygame.K_l:
                     p1_attack_id = "P1_L_HK"
 
+        tick_ms = pygame.time.get_ticks()
+
+        if super_freeze_frames_left > 0:
+            super_freeze_frames_left -= 1
+
+            # 描画（ステージに描いて、最後にウィンドウへ拡大）。
+            stage_surface.fill(constants.COLOR_BG)
+
+            _draw_stage_background(
+                stage_surface,
+                tick_ms=int(tick_ms),
+                stage_bg_frames=stage_bg_frames,
+                stage_bg_img=stage_bg_img,
+            )
+
+            _draw_rain(stage_surface, drops=rain_drops)
+
+            pygame.draw.line(
+                stage_surface,
+                (80, 80, 80),
+                (0, constants.GROUND_Y),
+                (constants.STAGE_WIDTH, constants.GROUND_Y),
+                2,
+            )
+
+            flash = pygame.Surface((constants.STAGE_WIDTH, constants.STAGE_HEIGHT), pygame.SRCALPHA)
+            phase = int(super_freeze_frames_left)
+            if (phase // 2) % 2 == 0:
+                flash.fill((255, 255, 255, 170))
+            else:
+                flash.fill((0, 0, 0, 160))
+            stage_surface.blit(flash, (0, 0))
+
+            p1.draw(stage_surface, debug_draw=debug_draw)
+            p2.draw(stage_surface, debug_draw=debug_draw)
+
+            scaled = pygame.transform.smoothscale(stage_surface, (constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
+            shake = 2 if (phase % 2 == 0) else -2
+            screen.blit(scaled, (shake, 0))
+            pygame.display.flip()
+            clock.tick(constants.FPS)
+            continue
+
+        if game_state == GameState.RESULT:
+            if not result_bg_frames:
+                # 9003-1..11 の背景をロード（convert_alpha のため display 初期化後に行う）。
+                base = resource_path("assets/images/RYUKO2nd/organized/hit")
+                for i in range(1, 12):
+                    matches = sorted(base.glob(f"*_9003-{i}.png"))
+                    if not matches:
+                        continue
+                    p = matches[0]
+                    try:
+                        img = pygame.image.load(str(p)).convert_alpha()
+                        bbox = img.get_bounding_rect(min_alpha=1)
+                        if bbox.width > 0 and bbox.height > 0:
+                            img = img.subsurface(bbox).copy()
+                        result_bg_frames.append(img)
+                    except pygame.error:
+                        pass
+
+            if result_bg_frames:
+                result_anim_counter = int(result_anim_counter) + 1
+                idx = min((int(result_anim_counter) // 10), len(result_bg_frames) - 1)
+                img = result_bg_frames[idx]
+                if img.get_size() != (constants.STAGE_WIDTH, constants.STAGE_HEIGHT):
+                    img = pygame.transform.smoothscale(img, (constants.STAGE_WIDTH, constants.STAGE_HEIGHT))
+                stage_surface.blit(img, (0, 0))
+            else:
+                stage_surface.fill((0, 0, 0))
+
+            overlay = pygame.Surface((constants.STAGE_WIDTH, constants.STAGE_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 120))
+            stage_surface.blit(overlay, (0, 0))
+
+            title = title_font.render("RESULT", True, (245, 245, 245))
+            stage_surface.blit(title, title.get_rect(midtop=(constants.STAGE_WIDTH // 2, 60)))
+
+            winner_text = "DRAW" if result_winner_side is None else ("P1 WIN" if int(result_winner_side) == 1 else "P2 WIN")
+            w_surf = font.render(winner_text, True, (255, 240, 120))
+            stage_surface.blit(w_surf, w_surf.get_rect(midtop=(constants.STAGE_WIDTH // 2, 120)))
+
+            y = 220
+            for i, item in enumerate(result_menu_items):
+                selected = i == int(result_menu_selection)
+                color = (255, 240, 120) if selected else (240, 240, 240)
+                label = item
+                surf = font.render(label, True, color)
+                stage_surface.blit(surf, surf.get_rect(midtop=(constants.STAGE_WIDTH // 2, y)))
+                y += 40
+
+            scaled = pygame.transform.smoothscale(stage_surface, (constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
+            screen.blit(scaled, (0, 0))
+            pygame.display.flip()
+            clock.tick(constants.FPS)
+            continue
+
+        if game_state == GameState.CHAR_SELECT:
+            stage_surface.fill((0, 0, 0))
+
+            tick = pygame.time.get_ticks()
+            if title_bg_img is not None:
+                bg = pygame.transform.smoothscale(title_bg_img, (constants.STAGE_WIDTH, constants.STAGE_HEIGHT))
+                bg.set_alpha(60)
+                stage_surface.blit(bg, (0, 0))
+
+            if char_select_thumb is None:
+                p = resource_path("assets/images/RYUKO2nd/キャラサムネ.png")
+                if p.exists():
+                    try:
+                        char_select_thumb = pygame.image.load(str(p)).convert_alpha()
+                    except pygame.error:
+                        char_select_thumb = None
+
+            if char_select_thumb is not None:
+                max_w = int(constants.STAGE_WIDTH * 0.45)
+                scale = max_w / max(1, char_select_thumb.get_width())
+                w = max(1, int(round(char_select_thumb.get_width() * scale)))
+                h = max(1, int(round(char_select_thumb.get_height() * scale)))
+                thumb = pygame.transform.smoothscale(char_select_thumb, (w, h))
+                stage_surface.blit(thumb, (int(constants.STAGE_WIDTH * 0.08), int(constants.STAGE_HEIGHT * 0.22)))
+
+            overlay = pygame.Surface((constants.STAGE_WIDTH, constants.STAGE_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 120))
+            stage_surface.blit(overlay, (0, 0))
+
+            scaled = pygame.transform.smoothscale(stage_surface, (constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
+            screen.blit(scaled, (0, 0))
+
+            title_surface = title_font.render("CHARACTER SELECT", True, (245, 245, 245))
+            title_rect = title_surface.get_rect(center=(constants.SCREEN_WIDTH // 2, 110))
+            screen.blit(title_surface, title_rect)
+
+            right_x = int(constants.SCREEN_WIDTH * 0.65)
+            base_y = int(constants.SCREEN_HEIGHT * 0.34)
+            for i, item in enumerate(char_select_items):
+                selected = i == int(char_select_selection)
+                color = (80, 255, 220) if selected else (210, 210, 210)
+                local_shake = int(3 * math.sin((tick / 120.0) + i)) if selected else 0
+
+                if item == "P2":
+                    mode = "CPU" if bool(char_select_p2_cpu) else "PLAYER"
+                    label = f"P2: {mode}  (←→ 切替)"
+                elif item == "START":
+                    label = "START"
+                else:
+                    label = "BACK"
+
+                text_surf = menu_font.render(label, True, color)
+                if selected:
+                    tw = max(1, int(round(text_surf.get_width() * 1.15)))
+                    th = max(1, int(round(text_surf.get_height() * 1.15)))
+                    text_surf = pygame.transform.smoothscale(text_surf, (tw, th))
+
+                text_rect = text_surf.get_rect(topleft=(right_x + local_shake, base_y + i * 54))
+                screen.blit(text_surf, text_rect)
+
+            hint = font.render("ESC: 戻る / Enter: 決定", True, (235, 235, 235))
+            screen.blit(hint, hint.get_rect(midbottom=(constants.SCREEN_WIDTH // 2, constants.SCREEN_HEIGHT - 22)))
+
+            pygame.display.flip()
+            clock.tick(constants.FPS)
+            continue
+
         if menu_open:
             stage_surface.fill(constants.COLOR_BG)
+
+            _draw_stage_background(
+                stage_surface,
+                tick_ms=int(tick_ms),
+                stage_bg_frames=stage_bg_frames,
+                stage_bg_img=stage_bg_img,
+            )
+
+            _draw_rain(stage_surface, drops=rain_drops)
 
             pygame.draw.line(
                 stage_surface,
@@ -431,16 +1444,104 @@ def main() -> None:
             screen.blit(title, (40, 40))
 
             res_w, res_h = resolutions[current_res_index]
-            items = [
-                f"解像度: {res_w}x{res_h}  (←→ 変更 / Enter 適用)",
-                "閉じる",
-            ]
+            if game_state == GameState.BATTLE:
+                items = [
+                    f"解像度: {res_w}x{res_h}  (←→ 変更 / Enter 適用)",
+                    f"BGM音量: {bgm_volume_level}  (←→ 変更)",
+                    f"効果音音量: {se_volume_level}  (←→ 変更)",
+                    "コマンドリスト",
+                    "メニューに戻る",
+                    "閉じる",
+                ]
+            else:
+                items = [
+                    f"解像度: {res_w}x{res_h}  (←→ 変更 / Enter 適用)",
+                    f"BGM音量: {bgm_volume_level}  (←→ 変更)",
+                    f"効果音音量: {se_volume_level}  (←→ 変更)",
+                    "閉じる",
+                ]
             y = 90
-            for i, text in enumerate(items):
-                color = (255, 255, 0) if i == menu_selection else (230, 230, 230)
-                surf = font.render(text, True, color)
-                screen.blit(surf, (60, y))
-                y += 34
+            if not cmdlist_open:
+                for i, text in enumerate(items):
+                    color = (255, 255, 0) if i == menu_selection else (230, 230, 230)
+                    surf = font.render(text, True, color)
+                    screen.blit(surf, (60, y))
+                    y += 34
+
+            if game_state == GameState.BATTLE and cmdlist_open:
+                overlay2 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
+                overlay2.fill((0, 0, 0, 210))
+                screen.blit(overlay2, (0, 0))
+
+                panel_x = 40
+                panel_y = 90
+                header = font.render("コマンドリスト (ESCで戻る)", True, (255, 255, 255))
+                screen.blit(header, (panel_x, panel_y - 40))
+
+                left_x = panel_x
+                list_y = panel_y
+                for i, (label, _aid) in enumerate(cmdlist_items):
+                    c = (255, 255, 0) if i == cmdlist_selection else (230, 230, 230)
+                    s = prompt_font.render(label, True, c)
+                    screen.blit(s, (left_x, list_y))
+                    list_y += int(s.get_height() + 8)
+
+                preview_w = 320
+                preview_h = 260
+                preview_x = constants.SCREEN_WIDTH - preview_w - 40
+                preview_y = 140
+                pygame.draw.rect(screen, (20, 20, 20), pygame.Rect(preview_x, preview_y, preview_w, preview_h), 0)
+                pygame.draw.rect(screen, (80, 80, 80), pygame.Rect(preview_x, preview_y, preview_w, preview_h), 2)
+
+                if cmdlist_items:
+                    _label, aid = cmdlist_items[cmdlist_selection]
+                    if int(aid) < 0:
+                        aid = 0
+                    elapsed = pygame.time.get_ticks() - int(cmdlist_preview_start_ms)
+                    elapsed_frames = int(elapsed // max(1, int(1000 / constants.FPS)))
+
+                    if cmdlist_closing:
+                        close_elapsed = pygame.time.get_ticks() - int(cmdlist_close_start_ms)
+                        close_frames = int(close_elapsed // max(1, int(1000 / constants.FPS)))
+                        pause = 20
+                        idx = min(7, int(close_frames))
+                        if close_frames >= 8:
+                            idx = 7
+                        img = getattr(p1, "_sprites", {}).get((181, idx))
+                        if img is not None:
+                            show = img
+                            max_w = preview_w - 24
+                            max_h = preview_h - 24
+                            scale = min(1.0, float(max_w) / float(show.get_width()), float(max_h) / float(show.get_height()))
+                            if scale < 1.0:
+                                w = max(1, int(round(show.get_width() * scale)))
+                                h = max(1, int(round(show.get_height() * scale)))
+                                show = pygame.transform.smoothscale(show, (w, h))
+                            cx = preview_x + (preview_w // 2)
+                            cy = preview_y + (preview_h // 2) + 30
+                            screen.blit(show, (cx - (show.get_width() // 2), cy - (show.get_height() // 2)))
+
+                        if close_frames >= (8 + pause):
+                            cmdlist_open = False
+                            cmdlist_closing = False
+                    else:
+                        key = _get_preview_sprite_key(int(aid), elapsed_frames=elapsed_frames)
+                        if key is not None:
+                            img = getattr(p1, "_sprites", {}).get(key)
+                            if img is not None:
+                                show = img
+                                if int(getattr(p1, "facing", 1)) < 0:
+                                    show = pygame.transform.flip(img, True, False)
+                                max_w = preview_w - 24
+                                max_h = preview_h - 24
+                                scale = min(1.0, float(max_w) / float(show.get_width()), float(max_h) / float(show.get_height()))
+                                if scale < 1.0:
+                                    w = max(1, int(round(show.get_width() * scale)))
+                                    h = max(1, int(round(show.get_height() * scale)))
+                                    show = pygame.transform.smoothscale(show, (w, h))
+                                cx = preview_x + (preview_w // 2)
+                                cy = preview_y + (preview_h // 2) + 30
+                                screen.blit(show, (cx - (show.get_width() // 2), cy - (show.get_height() // 2)))
 
             pygame.display.flip()
             clock.tick(constants.FPS)
@@ -448,6 +1549,8 @@ def main() -> None:
 
         if game_state == GameState.TITLE:
             stage_surface.fill((0, 0, 0))
+
+            tick = pygame.time.get_ticks()
 
             if title_bg_img is not None:
                 bg = pygame.transform.smoothscale(title_bg_img, (constants.STAGE_WIDTH, constants.STAGE_HEIGHT))
@@ -467,18 +1570,24 @@ def main() -> None:
 
             cx = constants.SCREEN_WIDTH // 2
             base_y = constants.SCREEN_HEIGHT // 2 - 20
-            tick = pygame.time.get_ticks()
             for i, name in enumerate(title_menu_items):
                 selected = i == title_menu_selection
                 color = (80, 255, 220) if selected else (210, 210, 210)
-                shake = int(3 * math.sin((tick / 120.0) + i)) if selected else 0
+                local_shake = int(3 * math.sin((tick / 120.0) + i)) if selected else 0
+
                 text_surf = menu_font.render(name, True, color)
-                text_rect = text_surf.get_rect(center=(cx + shake, base_y + i * 50))
+                if selected:
+                    w = max(1, int(round(text_surf.get_width() * 1.2)))
+                    h = max(1, int(round(text_surf.get_height() * 1.2)))
+                    text_surf = pygame.transform.smoothscale(text_surf, (w, h))
+
+                text_rect = text_surf.get_rect(center=(cx + local_shake, base_y + i * 50))
                 screen.blit(text_surf, text_rect)
                 if selected:
-                    arrow = menu_font.render(">", True, (80, 255, 220))
-                    arrow_rect = arrow.get_rect(midright=(text_rect.left - 14, text_rect.centery))
-                    screen.blit(arrow, arrow_rect)
+                    if (tick // 250) % 2 == 0:
+                        arrow = menu_font.render("▶", True, (80, 255, 220))
+                        arrow_rect = arrow.get_rect(midright=(text_rect.left - 14, text_rect.centery))
+                        screen.blit(arrow, arrow_rect)
 
             pygame.display.flip()
             clock.tick(constants.FPS)
@@ -499,31 +1608,146 @@ def main() -> None:
         p2.facing = 1 if p1.rect.centerx >= p2.rect.centerx else -1
 
         # 入力（intent）を Player に渡す。
-        p1.apply_input(
-            PlayerInput(
-                move_x=p1_move_x,
-                jump_pressed=p1_jump_pressed,
-                crouch=p1_crouch,
-                attack_id=p1_attack_id,
-            )
-        )
-        p2.apply_input(
-            PlayerInput(
-                move_x=p2_move_x,
-                jump_pressed=p2_jump_pressed,
-                crouch=p2_crouch,
-                attack_id=p2_attack_id,
-            )
+        can_play_round = (int(round_over_frames_left) <= 0) and (
+            (game_state != GameState.BATTLE) or (int(battle_countdown_frames_left) <= 0)
         )
 
-        # 物理更新。
+        # CPU control (P2) in Battle.
+        if game_state == GameState.BATTLE and cpu_enabled_battle and can_play_round:
+            cpu_decision_frames_left = max(0, int(cpu_decision_frames_left) - 1)
+            cpu_attack_cooldown = max(0, int(cpu_attack_cooldown) - 1)
+            cpu_jump_cooldown = max(0, int(cpu_jump_cooldown) - 1)
+            cpu_special_cooldown = max(0, int(cpu_special_cooldown) - 1)
+
+            dx = float(p1.rect.centerx - p2.rect.centerx)
+            adx = abs(dx)
+
+            # Default: approach if far, hold if mid, back off a bit if too close.
+            move_dir = 0
+            if adx > 230:
+                move_dir = 1 if dx > 0 else -1
+            elif adx < 90:
+                move_dir = -1 if dx > 0 else 1
+
+            p2_move_x = int(move_dir)
+            p2_crouch = False
+
+            # Simple decision cadence to avoid spamming.
+            if cpu_decision_frames_left <= 0:
+                cpu_decision_frames_left = int(constants.FPS * 0.20)
+
+                # 1) Close-range normal attack
+                if adx < 115 and cpu_attack_cooldown <= 0 and (not p2.attacking) and (not p2.in_hitstun) and (not p2.in_blockstun):
+                    p2.start_attack("P2_L_PUNCH")
+                    cpu_attack_cooldown = int(constants.FPS * 0.45)
+
+                # 2) Mid-range specials
+                if cpu_special_cooldown <= 0 and (not p2.in_hitstun) and (not p2.in_blockstun):
+                    # Prefer shinku if power is enough and distance is good.
+                    super_cost = int(getattr(constants, "POWER_GAUGE_SUPER_COST", 500))
+                    if adx > 170 and p2.can_spend_power(super_cost) and (random.random() < 0.12):
+                        if p2.spend_power(super_cost):
+                            p2.start_shinku_hadoken()
+                            if beam_se is not None:
+                                beam_se.play()
+                            super_freeze_frames_left = int(getattr(constants, "SUPER_FREEZE_FRAMES", 30))
+                            super_freeze_attacker_side = 2
+                            cpu_special_cooldown = int(constants.FPS * 1.2)
+                    elif adx > 150 and (random.random() < 0.22):
+                        p2.start_hadoken()
+                        cpu_special_cooldown = int(constants.FPS * 0.9)
+
+                # 3) Occasional jump to vary behavior
+                if cpu_jump_cooldown <= 0 and adx > 140 and (random.random() < 0.06):
+                    p2_jump_pressed = True
+                    cpu_jump_cooldown = int(constants.FPS * 1.0)
+
+        if can_play_round:
+            p1.apply_input(
+                PlayerInput(
+                    move_x=p1_move_x,
+                    jump_pressed=p1_jump_pressed,
+                    crouch=p1_crouch,
+                    attack_id=p1_attack_id,
+                )
+            )
+            p2.apply_input(
+                PlayerInput(
+                    move_x=p2_move_x,
+                    jump_pressed=p2_jump_pressed,
+                    crouch=p2_crouch,
+                    attack_id=p2_attack_id,
+                )
+            )
+
+        def _apply_special_results(res: dict[str, Any], *, side: int, player: Player) -> None:
+            nonlocal super_freeze_frames_left, super_freeze_attacker_side
+            if bool(res.get("did_shinku")):
+                if beam_se is not None:
+                    beam_se.play()
+                super_freeze_frames_left = int(getattr(constants, "SUPER_FREEZE_FRAMES", 30))
+                super_freeze_attacker_side = int(side)
+
+        if can_play_round:
+            early = int(getattr(constants, "COMMAND_BUTTON_EARLY_FRAMES", 2))
+            super_cost = int(getattr(constants, "POWER_GAUGE_SUPER_COST", 500))
+
+            res1 = p1.process_special_inputs(attack_id=p1_attack_id, early_frames=early, super_cost=super_cost)
+            _apply_special_results(res1, side=1, player=p1)
+            if bool(res1.get("clear_attack_id")):
+                p1_attack_id = None
+
+            res2 = p2.process_special_inputs(attack_id=p2_attack_id, early_frames=early, super_cost=super_cost)
+            _apply_special_results(res2, side=2, player=p2)
+            if bool(res2.get("clear_attack_id")):
+                p2_attack_id = None
+
+        # 物理更新（KO中/カウント中でもアニメは進める）。
         p1.update()
         p2.update()
+
+        # Rush wind/dust effect spawn (ポーリングで確実に発生させる)。
+        if rush_dust_frames:
+            pos = p1.consume_rush_effect_spawn()
+            if pos is not None:
+                effects.append(Effect(frames=rush_dust_frames, pos=pos, frames_per_image=2))
+            pos = p2.consume_rush_effect_spawn()
+            if pos is not None:
+                effects.append(Effect(frames=rush_dust_frames, pos=pos, frames_per_image=2))
+
+        if p1.consume_hadoken_spawn():
+            _spawn_hadoken(p1)
+        if p2.consume_hadoken_spawn():
+            _spawn_hadoken(p2)
+
+        if p1.consume_shinku_spawn():
+            _spawn_shinku(p1)
+        if p2.consume_shinku_spawn():
+            _spawn_shinku(p2)
+
+        end_side_1 = p1.consume_combo_end_side()
+        end_side_2 = p2.consume_combo_end_side()
+        if end_side_1 == 1:
+            p1.reset_combo_count()
+        if end_side_1 == 2:
+            p2.reset_combo_count()
+        if end_side_2 == 1:
+            p1.reset_combo_count()
+        if end_side_2 == 2:
+            p2.reset_combo_count()
 
         # エフェクト更新。
         for e in effects:
             e.update()
         effects = [e for e in effects if not e.finished]
+
+        if game_state == GameState.BATTLE:
+            _update_rain_drops(rain_drops)
+
+        stage_bounds = pygame.Rect(0, 0, constants.STAGE_WIDTH, constants.STAGE_HEIGHT)
+        for pr in projectiles:
+            pr.update(bounds=stage_bounds)
+        projectiles = [pr for pr in projectiles if not pr.finished]
 
         # 押し合い（Pushbox）解決。
         # Pushbox が重なったら、x方向に左右へ押し戻して重なりを解消する。
@@ -584,11 +1808,13 @@ def main() -> None:
                 knockback_px = 12
                 hitstop_frames = constants.HITSTOP_DEFAULT_FRAMES
                 attacker_recoil_px = int(getattr(constants, "ATTACKER_RECOIL_PX_DEFAULT", 3))
+                hit_pause = int(getattr(constants, "HITSTUN_DEFAULT_FRAMES", 20))
             else:
                 damage = int(spec["damage"])
                 knockback_px = int(spec["knockback_px"])
                 hitstop_frames = int(spec["hitstop_frames"])
                 attacker_recoil_px = int(spec.get("attacker_recoil_px", getattr(constants, "ATTACKER_RECOIL_PX_DEFAULT", 3)))
+                hit_pause = int(spec.get("hit_pause", getattr(constants, "HITSTUN_DEFAULT_FRAMES", 20)))
 
             # ガード判定：後ろ入力中（defender.holding_back）ならガード成功。
             # まずは「後ろに下がっている間に攻撃を受けると、ダメージを受けずにガードモーション」を成立させる。
@@ -604,6 +1830,9 @@ def main() -> None:
                 chip_damage = int(max(0, round(damage * chip_ratio)))
 
                 defender.take_damage(chip_damage)
+
+                gain_guard = int(getattr(constants, "POWER_GAIN_ON_GUARD", 20))
+                attacker.add_power(gain_guard)
 
                 base_guard_kb = int(getattr(constants, "GUARD_KNOCKBACK_PX_DEFAULT", knockback_px))
                 guard_mul = float(getattr(constants, "GUARD_KNOCKBACK_MULTIPLIER", 1.35))
@@ -637,7 +1866,20 @@ def main() -> None:
                 defender.hitstop_frames_left = max(defender.hitstop_frames_left, hitstop_total)
                 return
 
-            defender.take_damage(damage)
+            attacker_side = 1 if attacker is p1 else 2
+            if int(getattr(defender, "hitstun_timer", 0)) > 0:
+                attacker.extend_combo_on_opponent()
+            else:
+                attacker.start_combo_on_opponent(opponent_side=(2 if attacker_side == 1 else 1))
+
+            dmg_mul = float(getattr(constants, "get_damage_multiplier", lambda _c: 1.0)(attacker.get_combo_count()))
+            scaled_damage = int(max(0, round(float(damage) * dmg_mul)))
+
+            defender.take_damage(scaled_damage)
+            if hit_se is not None:
+                hit_se.play()
+            gain_hit = int(getattr(constants, "POWER_GAIN_ON_HIT", 50))
+            attacker.add_power(gain_hit)
             half_w = defender.rect.width / 2.0
             at_left_wall = defender.pos_x <= (half_w + 0.01)
             at_right_wall = defender.pos_x >= ((constants.STAGE_WIDTH - half_w) - 0.01)
@@ -648,11 +1890,15 @@ def main() -> None:
                 attacker.apply_knockback(dir_x=-attacker.facing, amount_px=int(knockback_px) * 2)
             else:
                 defender.apply_knockback(dir_x=attacker.facing, amount_px=knockback_px)
-            defender.enter_hitstun()
+
+            defender.set_combo_victim_state(attacker_side=attacker_side, hitstun_frames=hit_pause)
+            defender.enter_hitstun(frames=hit_pause)
 
             # セパレーション：攻撃側も少し後ろへ下がる。
             attacker.apply_knockback(dir_x=-attacker.facing, amount_px=attacker_recoil_px)
             attacker.mark_damage_dealt()
+
+            attacker.add_combo_damage(scaled_damage)
 
             # 衝突点に火花エフェクトを生成（画像がある場合）。
             if spark_frames:
@@ -667,8 +1913,104 @@ def main() -> None:
         _apply_hit(p1, p2)
         _apply_hit(p2, p1)
 
+        for pr in projectiles:
+            if pr.finished:
+                continue
+
+            if int(getattr(pr, "owner_side", 0)) == 1:
+                target = p2
+                attacker = p1
+            elif int(getattr(pr, "owner_side", 0)) == 2:
+                target = p1
+                attacker = p2
+            else:
+                continue
+
+            if pr.get_rect().colliderect(target.get_hurtbox()):
+                is_guarding = bool(getattr(target, "can_guard_now", lambda: False)()) and bool(
+                    getattr(target, "is_guarding_intent", lambda: False)()
+                )
+
+                if is_guarding:
+                    damage = int(getattr(pr, "damage", 0))
+
+                    chip_ratio = float(getattr(constants, "GUARD_CHIP_DAMAGE_RATIO", 0.0))
+                    chip_damage = int(max(0, round(damage * chip_ratio)))
+                    target.take_damage(chip_damage)
+
+                    gain_guard = int(getattr(constants, "POWER_GAIN_ON_GUARD", 20))
+                    attacker.add_power(gain_guard)
+
+                    base_guard_kb = int(getattr(constants, "GUARD_KNOCKBACK_PX_DEFAULT", 10))
+                    guard_mul = float(getattr(constants, "GUARD_KNOCKBACK_MULTIPLIER", 1.35))
+                    guard_knockback = int(max(0, round(base_guard_kb * guard_mul)))
+
+                    # Guard knockback: push defender away from projectile direction
+                    dir_x = 1 if float(getattr(pr, "vel", pygame.Vector2(1, 0)).x) > 0 else -1
+                    target.apply_knockback(dir_x=dir_x, amount_px=guard_knockback)
+                    crouch_guard = bool(getattr(target, "crouching", False))
+                    target.enter_blockstun(crouching=crouch_guard)
+
+                    extra_hitstop = int(getattr(constants, "HIT_EFFECT_EXTRA_HITSTOP_FRAMES", 4))
+                    hitstop_total = int(getattr(constants, "HITSTOP_DEFAULT_FRAMES", 6)) + max(0, extra_hitstop)
+                    attacker.hitstop_frames_left = max(attacker.hitstop_frames_left, hitstop_total)
+                    target.hitstop_frames_left = max(target.hitstop_frames_left, hitstop_total)
+
+                    if isinstance(pr, SuperProjectile):
+                        if pr.can_hit_now():
+                            pr.register_hit()
+                    else:
+                        pr._finished = True
+                    continue
+
+                if isinstance(pr, SuperProjectile):
+                    if pr.can_hit_now():
+                        pr.register_hit()
+
+                        attacker_side = 1 if attacker is p1 else 2
+                        if int(getattr(target, "hitstun_timer", 0)) > 0:
+                            attacker.extend_combo_on_opponent()
+                        else:
+                            attacker.start_combo_on_opponent(opponent_side=(2 if attacker_side == 1 else 1))
+
+                        target.take_damage(pr.damage)
+                        if hit_se is not None:
+                            hit_se.play()
+                        attacker.add_combo_damage(int(getattr(pr, "damage", 0)))
+                        target.set_combo_victim_state(attacker_side=attacker_side, hitstun_frames=pr.hitstun_frames)
+                        target.enter_hitstun(frames=pr.hitstun_frames)
+                        target.apply_knockback(dir_x=(1 if pr.vel.x > 0 else -1), amount_px=int(pr.push_on_hit_px))
+                        if int(getattr(pr, "owner_side", 0)) == 1:
+                            p1.add_power(30)
+                        elif int(getattr(pr, "owner_side", 0)) == 2:
+                            p2.add_power(30)
+                else:
+                    pr._finished = True
+
+                    attacker_side = 1 if attacker is p1 else 2
+                    if int(getattr(target, "hitstun_timer", 0)) > 0:
+                        attacker.extend_combo_on_opponent()
+                    else:
+                        attacker.start_combo_on_opponent(opponent_side=(2 if attacker_side == 1 else 1))
+
+                    target.take_damage(pr.damage)
+                    if hit_se is not None:
+                        hit_se.play()
+                    attacker.add_combo_damage(int(getattr(pr, "damage", 0)))
+                    target.set_combo_victim_state(attacker_side=attacker_side, hitstun_frames=pr.hitstun_frames)
+                    target.enter_hitstun(frames=pr.hitstun_frames)
+
         # 描画（ステージに描いて、最後にウィンドウへ拡大）。
         stage_surface.fill(constants.COLOR_BG)
+
+        _draw_stage_background(
+            stage_surface,
+            tick_ms=int(tick_ms),
+            stage_bg_frames=stage_bg_frames,
+            stage_bg_img=stage_bg_img,
+        )
+
+        _draw_rain(stage_surface, drops=rain_drops)
 
         # 地面ライン（目印）。
         pygame.draw.line(
@@ -687,7 +2029,19 @@ def main() -> None:
         for e in effects:
             e.draw(stage_surface)
 
+        for pr in projectiles:
+            pr.draw(stage_surface)
+
         if debug_draw:
+            hud_top = 44
+            if p1_key_history:
+                # 左端は入力（コマンド）表示欄として確保する。
+                x = 12
+                y = hud_top
+                for i, t in enumerate(p1_key_history):
+                    surf = font.render(t, True, (240, 240, 240))
+                    stage_surface.blit(surf, (x, y + i * 22))
+
             p1_info = p1.get_last_move_frame_info()
             if p1_info is not None:
                 lines = [
@@ -699,8 +2053,9 @@ def main() -> None:
                     f"Active: {p1_info.active_frames}f",
                     f"Recovery: {p1_info.recovery_frames}f",
                 ]
-                x = 12
-                y = 56
+                # フレーム表示などのデバッグ文字は右へ寄せ、左端は入力欄にする。
+                x = 96
+                y = hud_top
                 for i, t in enumerate(lines):
                     surf = font.render(t, True, (240, 240, 240))
                     stage_surface.blit(surf, (x, y + i * 22))
@@ -728,6 +2083,21 @@ def main() -> None:
         p1_hp = float(p1.hp)
         p2_hp = float(p2.hp)
 
+        if game_state == GameState.BATTLE and int(round_over_frames_left) <= 0:
+            if p1_hp <= 0 and p2_hp > 0:
+                round_over_frames_left = int(constants.FPS * 2)
+                round_over_winner_side = 2
+                p1.enter_knockdown()
+            elif p2_hp <= 0 and p1_hp > 0:
+                round_over_frames_left = int(constants.FPS * 2)
+                round_over_winner_side = 1
+                p2.enter_knockdown()
+            elif p1_hp <= 0 and p2_hp <= 0:
+                round_over_frames_left = int(constants.FPS * 2)
+                round_over_winner_side = None
+                p1.enter_knockdown()
+                p2.enter_knockdown()
+
         if p1_chip_hp < p1_hp:
             p1_chip_hp = p1_hp
         if p2_chip_hp < p2_hp:
@@ -736,7 +2106,7 @@ def main() -> None:
         p1_chip_hp += (p1_hp - p1_chip_hp) * constants.HP_BAR_DAMAGE_LERP
         p2_chip_hp += (p2_hp - p2_chip_hp) * constants.HP_BAR_DAMAGE_LERP
 
-        _draw_hp_bar(
+        hud.draw_hp_bar(
             stage_surface,
             x=constants.HP_BAR_MARGIN_X,
             y=constants.HP_BAR_MARGIN_Y,
@@ -747,7 +2117,7 @@ def main() -> None:
             max_hp=float(p1.max_hp),
             align_right=False,
         )
-        _draw_hp_bar(
+        hud.draw_hp_bar(
             stage_surface,
             x=constants.STAGE_WIDTH - constants.HP_BAR_MARGIN_X - constants.HP_BAR_WIDTH,
             y=constants.HP_BAR_MARGIN_Y,
@@ -758,6 +2128,149 @@ def main() -> None:
             max_hp=float(p2.max_hp),
             align_right=True,
         )
+
+        if game_state in {GameState.BATTLE, GameState.TRAINING}:
+            cy = int(constants.HP_BAR_MARGIN_Y + (constants.HP_BAR_HEIGHT // 2))
+            left_x = int(constants.HP_BAR_MARGIN_X + constants.HP_BAR_WIDTH + 18)
+            right_x = int(constants.STAGE_WIDTH - constants.HP_BAR_MARGIN_X - constants.HP_BAR_WIDTH - 18)
+            hud.draw_round_markers(
+                stage_surface,
+                x=left_x,
+                y=cy,
+                wins=p1_round_wins,
+                max_wins=2,
+                align_right=False,
+                tick_ms=int(tick_ms),
+            )
+            hud.draw_round_markers(
+                stage_surface,
+                x=right_x,
+                y=cy,
+                wins=p2_round_wins,
+                max_wins=2,
+                align_right=True,
+                tick_ms=int(tick_ms),
+            )
+
+        # Round timer (top center)
+        if game_state in {GameState.BATTLE, GameState.TRAINING}:
+            if (
+                game_state == GameState.BATTLE
+                and round_timer_frames_left is not None
+                and int(round_over_frames_left) <= 0
+                and int(battle_countdown_frames_left) <= 0
+            ):
+                round_timer_frames_left = max(0, int(round_timer_frames_left) - 1)
+
+            if game_state == GameState.TRAINING:
+                timer_text = "∞"
+            else:
+                left = 0 if round_timer_frames_left is None else int(round_timer_frames_left)
+                sec = int(math.ceil(left / max(1, int(constants.FPS))))
+                timer_text = "TIME UP" if sec <= 0 else f"{sec:02d}"
+
+            timer_surf = title_font.render(timer_text, True, (245, 245, 245))
+            timer_rect = timer_surf.get_rect(midtop=(constants.STAGE_WIDTH // 2, int(constants.HP_BAR_MARGIN_Y)))
+            stage_surface.blit(timer_surf, timer_rect)
+
+        # Pre-round countdown (Battle only)
+        if game_state == GameState.BATTLE and int(round_over_frames_left) <= 0 and int(battle_countdown_frames_left) > 0:
+            battle_countdown_frames_left = max(0, int(battle_countdown_frames_left) - 1)
+            sec_left = int(math.ceil(int(battle_countdown_frames_left) / max(1, int(constants.FPS))))
+            show = max(1, sec_left)
+
+            if battle_countdown_last_announce != int(show):
+                battle_countdown_last_announce = int(show)
+                if int(show) == 3 and countdown_se_3 is not None:
+                    countdown_se_3.play()
+                elif int(show) == 2 and countdown_se_2 is not None:
+                    countdown_se_2.play()
+                elif int(show) == 1 and countdown_se_1 is not None:
+                    countdown_se_1.play()
+
+            cd_surf = title_font.render(str(show), True, (255, 240, 120))
+            w = max(1, int(round(cd_surf.get_width() * 2.2)))
+            h = max(1, int(round(cd_surf.get_height() * 2.2)))
+            cd_surf = pygame.transform.smoothscale(cd_surf, (w, h))
+            cd_rect = cd_surf.get_rect(center=(constants.STAGE_WIDTH // 2, constants.STAGE_HEIGHT // 2 - 40))
+            stage_surface.blit(cd_surf, cd_rect)
+        elif game_state == GameState.BATTLE and int(round_over_frames_left) <= 0 and int(battle_countdown_frames_left) == 0:
+            if battle_countdown_last_announce is not None:
+                battle_countdown_last_announce = None
+                if countdown_se_go is not None:
+                    countdown_se_go.play()
+
+        if int(round_over_frames_left) > 0:
+            round_over_frames_left = max(0, int(round_over_frames_left) - 1)
+            ko_surf = title_font.render("KO", True, (255, 240, 120))
+            w = max(1, int(round(ko_surf.get_width() * 1.8)))
+            h = max(1, int(round(ko_surf.get_height() * 1.8)))
+            ko_surf = pygame.transform.smoothscale(ko_surf, (w, h))
+            rect = ko_surf.get_rect(center=(constants.STAGE_WIDTH // 2, constants.STAGE_HEIGHT // 2 - 30))
+            stage_surface.blit(ko_surf, rect)
+
+            if int(round_over_frames_left) == 0 and game_state == GameState.BATTLE:
+                if int(round_over_winner_side or 0) == 1:
+                    p1_round_wins += 1
+                elif int(round_over_winner_side or 0) == 2:
+                    p2_round_wins += 1
+
+                if int(p1_round_wins) >= 2 or int(p2_round_wins) >= 2:
+                    game_state = GameState.RESULT
+                    menu_open = False
+                    cmdlist_open = False
+                    result_menu_selection = 0
+                    result_winner_side = 1 if int(p1_round_wins) >= 2 and int(p2_round_wins) < 2 else (2 if int(p2_round_wins) >= 2 and int(p1_round_wins) < 2 else None)
+                    result_anim_counter = 0
+                    _ensure_bgm_for_state(game_state)
+                else:
+                    reset_match()
+
+        # Power gauge (super meter)
+        gauge_h = 10
+        gauge_gap = 6
+        gauge_y = int(constants.HP_BAR_MARGIN_Y + constants.HP_BAR_HEIGHT + gauge_gap)
+        mx = float(getattr(constants, "POWER_GAUGE_MAX", 1000))
+        _draw_power_gauge(
+            stage_surface,
+            x=constants.HP_BAR_MARGIN_X,
+            y=gauge_y,
+            w=constants.HP_BAR_WIDTH,
+            h=gauge_h,
+            value=float(getattr(p1, "power_gauge", 0)),
+            max_value=mx,
+            align_right=False,
+        )
+        _draw_power_gauge(
+            stage_surface,
+            x=constants.STAGE_WIDTH - constants.HP_BAR_MARGIN_X - constants.HP_BAR_WIDTH,
+            y=gauge_y,
+            w=constants.HP_BAR_WIDTH,
+            h=gauge_h,
+            value=float(getattr(p2, "power_gauge", 0)),
+            max_value=mx,
+            align_right=True,
+        )
+
+        if int(getattr(p1, "combo_display_frames_left", 0)) > 0 and int(getattr(p1, "combo_display_count", 0)) >= 2:
+            txt = f"{int(p1.combo_display_count)} Hits"
+            surf = title_font.render(txt, True, (255, 240, 120))
+            stage_surface.blit(surf, (16, 110))
+
+            dmg = int(getattr(p1, "combo_damage_display", 0))
+            dmg_surf = prompt_font.render(f"{dmg}", True, (255, 240, 200))
+            stage_surface.blit(dmg_surf, (16, 110 + surf.get_height() - 6))
+
+        if int(getattr(p2, "combo_display_frames_left", 0)) > 0 and int(getattr(p2, "combo_display_count", 0)) >= 2:
+            txt = f"{int(p2.combo_display_count)} Hits"
+            surf = title_font.render(txt, True, (255, 240, 120))
+            rect = surf.get_rect(topright=(constants.STAGE_WIDTH - 16, 110))
+            stage_surface.blit(surf, rect)
+
+            dmg = int(getattr(p2, "combo_damage_display", 0))
+            dmg_surf = prompt_font.render(f"{dmg}", True, (255, 240, 200))
+            dmg_rect = dmg_surf.get_rect(topright=(constants.STAGE_WIDTH - 16, 110 + surf.get_height() - 6))
+            stage_surface.blit(dmg_surf, dmg_rect)
 
         scaled = pygame.transform.smoothscale(stage_surface, (constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
         screen.blit(scaled, (0, 0))
