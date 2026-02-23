@@ -157,6 +157,48 @@ def main() -> None:
     se_volume_level = int(settings.get("se_volume_level", 60))
     se_volume_level = max(0, min(100, se_volume_level))
 
+    default_keybinds: dict[str, int] = {
+        "P1_LEFT": int(pygame.K_a),
+        "P1_RIGHT": int(pygame.K_d),
+        "P1_DOWN": int(pygame.K_s),
+        "P1_JUMP": int(pygame.K_w),
+        "P1_LP": int(pygame.K_u),
+        "P1_MP": int(pygame.K_i),
+        "P1_HP": int(pygame.K_o),
+        "P1_LK": int(pygame.K_j),
+        "P1_MK": int(pygame.K_k),
+        "P1_HK": int(pygame.K_l),
+        "P2_LEFT": int(pygame.K_LEFT),
+        "P2_RIGHT": int(pygame.K_RIGHT),
+        "P2_DOWN": int(pygame.K_DOWN),
+        "P2_JUMP": int(pygame.K_UP),
+        "P2_ATTACK": int(pygame.K_SEMICOLON),
+        "QUICK_RESET": int(pygame.K_r),
+    }
+
+    keybinds: dict[str, int] = dict(default_keybinds)
+    try:
+        raw = settings.get("keybinds", {})
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if k in default_keybinds:
+                    try:
+                        keybinds[str(k)] = int(v)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+
+    def _save_keybinds() -> None:
+        settings["keybinds"] = dict(keybinds)
+        _save_settings(settings)
+
+    def _key_name(code: int) -> str:
+        try:
+            return str(pygame.key.name(int(code)))
+        except Exception:
+            return str(code)
+
     project_root = resource_path(".")
     jp_font_path = resource_path("assets/fonts/TogeMaruGothic-700-Bold.ttf")
     mono_font_name = "consolas"
@@ -164,12 +206,16 @@ def main() -> None:
         font = pygame.font.Font(str(jp_font_path), 28)
         title_font = pygame.font.Font(str(jp_font_path), 72)
         prompt_font = pygame.font.Font(str(jp_font_path), 32)
+        keycfg_font = pygame.font.Font(str(jp_font_path), 26)
+        debug_font = pygame.font.Font(str(jp_font_path), 22)
         menu_font = pygame.font.SysFont(mono_font_name, 34)
     else:
         font = pygame.font.SysFont(mono_font_name, 28)
         title_font = pygame.font.SysFont(mono_font_name, 72)
         prompt_font = pygame.font.SysFont(mono_font_name, 32)
-        menu_font = font
+        keycfg_font = pygame.font.SysFont(mono_font_name, 26)
+        debug_font = pygame.font.SysFont(mono_font_name, 22)
+        menu_font = pygame.font.SysFont(mono_font_name, 34)
 
     def _actions_have_frame_clsns(actions: list[dict[str, Any]]) -> bool:
         for action in actions:
@@ -494,6 +540,12 @@ def main() -> None:
     # F3 で切り替える。
     debug_draw = constants.DEBUG_DRAW_DEFAULT
 
+    debugmenu_open = False
+    debugmenu_selection = 0
+    debug_ui_show_key_history = True
+    debug_ui_show_p1_frames = True
+    debug_ui_show_p2_frames = True
+
     # ESC で表示する簡易メニュー。
     menu_open = False
     menu_selection = 0
@@ -502,6 +554,40 @@ def main() -> None:
     cmdlist_preview_start_ms = 0
     cmdlist_closing = False
     cmdlist_close_start_ms = 0
+
+    keyconfig_open = False
+    keyconfig_selection = 0
+    keyconfig_waiting_action: str | None = None
+
+    training_settings_open = False
+    training_settings_selection = 0
+    training_hp_percent_p1 = 100
+    training_hp_percent_p2 = 100
+    training_sp_percent_p1 = 100
+    training_sp_percent_p2 = 100
+    training_p2_all_guard = False
+
+    training_p2_state_lock = 0
+    training_start_position = 0
+
+    keyconfig_actions: list[tuple[str, str]] = [
+        ("P1 左", "P1_LEFT"),
+        ("P1 右", "P1_RIGHT"),
+        ("P1 下", "P1_DOWN"),
+        ("P1 ジャンプ", "P1_JUMP"),
+        ("P1 弱P", "P1_LP"),
+        ("P1 中P", "P1_MP"),
+        ("P1 強P", "P1_HP"),
+        ("P1 弱K", "P1_LK"),
+        ("P1 中K", "P1_MK"),
+        ("P1 強K", "P1_HK"),
+        ("P2 左", "P2_LEFT"),
+        ("P2 右", "P2_RIGHT"),
+        ("P2 下", "P2_DOWN"),
+        ("P2 ジャンプ", "P2_JUMP"),
+        ("P2 攻撃", "P2_ATTACK"),
+        ("クイックリセット", "QUICK_RESET"),
+    ]
 
     cmdlist_items: list[tuple[str, int]] = [
         ("U: 弱パンチ", 400),
@@ -591,6 +677,7 @@ def main() -> None:
     char_select_items = ["P2", "START", "BACK"]
     char_select_selection = 0
     char_select_p2_cpu: bool = True
+    char_select_next_state: GameState = GameState.BATTLE
     char_select_thumb: pygame.Surface | None = None
 
     result_menu_items = ["rematch", "back_to_title", "exit"]
@@ -797,6 +884,7 @@ def main() -> None:
     super_freeze_attacker_side: int = 0
 
     cpu_enabled_battle: bool = True
+    cpu_enabled_training: bool = False
     cpu_decision_frames_left: int = 0
     cpu_attack_cooldown: int = 0
     cpu_jump_cooldown: int = 0
@@ -819,8 +907,21 @@ def main() -> None:
         # - debug_draw（F3 のON/OFF）は維持する。
         nonlocal p1_chip_hp, p2_chip_hp, round_timer_frames_left, battle_countdown_frames_left, battle_countdown_last_announce
 
-        p1.pos_x = float(150 + (p1.rect.width // 2))
-        p2.pos_x = float((constants.STAGE_WIDTH - 200) + (p2.rect.width // 2))
+        if game_state == GameState.TRAINING:
+            preset = int(training_start_position)
+            if preset == 1:
+                p1.pos_x = float(140 + (p1.rect.width // 2))
+                p2.pos_x = float(260 + (p2.rect.width // 2))
+            elif preset == 2:
+                p2.pos_x = float((constants.STAGE_WIDTH - 140) + (p2.rect.width // 2))
+                p1.pos_x = float((constants.STAGE_WIDTH - 260) + (p1.rect.width // 2))
+            else:
+                center = float(constants.STAGE_WIDTH / 2)
+                p1.pos_x = float(center - 90)
+                p2.pos_x = float(center + 90)
+        else:
+            p1.pos_x = float(150 + (p1.rect.width // 2))
+            p2.pos_x = float((constants.STAGE_WIDTH - 200) + (p2.rect.width // 2))
         p1.pos_y = float(constants.GROUND_Y)
         p2.pos_y = float(constants.GROUND_Y)
         p1.rect.midbottom = (int(p1.pos_x), int(p1.pos_y))
@@ -838,10 +939,19 @@ def main() -> None:
         p1.reset_round_state()
         p2.reset_round_state()
 
-        p1.hp = p1.max_hp
-        p2.hp = p2.max_hp
-        p1_chip_hp = float(p1.max_hp)
-        p2_chip_hp = float(p2.max_hp)
+        if game_state == GameState.TRAINING:
+            p1.hp = int(round(p1.max_hp * (float(training_hp_percent_p1) / 100.0)))
+            p2.hp = int(round(p2.max_hp * (float(training_hp_percent_p2) / 100.0)))
+        else:
+            p1.hp = p1.max_hp
+            p2.hp = p2.max_hp
+        p1_chip_hp = float(p1.hp)
+        p2_chip_hp = float(p2.hp)
+
+        if game_state == GameState.TRAINING:
+            max_sp = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+            p1.power_gauge = int(round(max_sp * (float(training_sp_percent_p1) / 100.0)))
+            p2.power_gauge = int(round(max_sp * (float(training_sp_percent_p2) / 100.0)))
 
         if game_state == GameState.BATTLE:
             round_timer_frames_left = int(constants.FPS * 99)
@@ -882,9 +992,26 @@ def main() -> None:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
+                if bool(menu_open) and bool(keyconfig_open) and (keyconfig_waiting_action is not None):
+                    if event.key == pygame.K_ESCAPE:
+                        keyconfig_waiting_action = None
+                        continue
+                    keybinds[str(keyconfig_waiting_action)] = int(event.key)
+                    _save_keybinds()
+                    keyconfig_waiting_action = None
+                    continue
+
                 if event.key == pygame.K_F3:
                     if game_state == GameState.TRAINING:
                         debug_draw = not debug_draw
+                    continue
+
+                if (
+                    game_state == GameState.TRAINING
+                    and (not bool(menu_open))
+                    and event.key == int(keybinds.get("QUICK_RESET", pygame.K_r))
+                ):
+                    reset_match()
                     continue
 
                 if game_state == GameState.RESULT:
@@ -959,41 +1086,43 @@ def main() -> None:
                     continue
 
                 if event.key in {
-                    pygame.K_a,
-                    pygame.K_s,
-                    pygame.K_d,
-                    pygame.K_w,
-                    pygame.K_u,
-                    pygame.K_i,
-                    pygame.K_o,
-                    pygame.K_j,
-                    pygame.K_k,
-                    pygame.K_l,
+                    int(keybinds.get("P1_LEFT", pygame.K_a)),
+                    int(keybinds.get("P1_DOWN", pygame.K_s)),
+                    int(keybinds.get("P1_RIGHT", pygame.K_d)),
+                    int(keybinds.get("P1_JUMP", pygame.K_w)),
+                    int(keybinds.get("P1_LP", pygame.K_u)),
+                    int(keybinds.get("P1_MP", pygame.K_i)),
+                    int(keybinds.get("P1_HP", pygame.K_o)),
+                    int(keybinds.get("P1_LK", pygame.K_j)),
+                    int(keybinds.get("P1_MK", pygame.K_k)),
+                    int(keybinds.get("P1_HK", pygame.K_l)),
                 }:
                     name_map = {
-                        pygame.K_a: "←",
-                        pygame.K_s: "↓",
-                        pygame.K_d: "→",
-                        pygame.K_w: "↑",
-                        pygame.K_u: "P",
-                        pygame.K_i: "P",
-                        pygame.K_o: "P",
-                        pygame.K_j: "J",
-                        pygame.K_k: "K",
-                        pygame.K_l: "L",
+                        int(keybinds.get("P1_LEFT", pygame.K_a)): "←",
+                        int(keybinds.get("P1_DOWN", pygame.K_s)): "↓",
+                        int(keybinds.get("P1_RIGHT", pygame.K_d)): "→",
+                        int(keybinds.get("P1_JUMP", pygame.K_w)): "↑",
+                        int(keybinds.get("P1_LP", pygame.K_u)): "U",
+                        int(keybinds.get("P1_MP", pygame.K_i)): "I",
+                        int(keybinds.get("P1_HP", pygame.K_o)): "O",
+                        int(keybinds.get("P1_LK", pygame.K_j)): "J",
+                        int(keybinds.get("P1_MK", pygame.K_k)): "K",
+                        int(keybinds.get("P1_HK", pygame.K_l)): "L",
                     }
-                    p1_key_history.insert(0, name_map.get(event.key, str(event.key)))
+                    p1_key_history.insert(0, name_map.get(int(event.key), str(event.key)))
                     p1_key_history = p1_key_history[:16]
 
                 if game_state == GameState.TITLE and menu_open:
                     if event.key == pygame.K_ESCAPE:
                         menu_open = False
+                        keyconfig_open = False
+                        keyconfig_waiting_action = None
                     elif event.key in {pygame.K_UP, pygame.K_w}:
-                        menu_selection = (menu_selection - 1) % 4
+                        menu_selection = (menu_selection - 1) % 5
                         if menu_move_se is not None:
                             menu_move_se.play()
                     elif event.key in {pygame.K_DOWN, pygame.K_s}:
-                        menu_selection = (menu_selection + 1) % 4
+                        menu_selection = (menu_selection + 1) % 5
                         if menu_move_se is not None:
                             menu_move_se.play()
                     elif event.key in {pygame.K_LEFT, pygame.K_a}:
@@ -1029,6 +1158,10 @@ def main() -> None:
                             _apply_resolution(resolutions[current_res_index])
                             reset_match()
                         elif menu_selection == 3:
+                            keyconfig_open = True
+                            keyconfig_selection = 0
+                            keyconfig_waiting_action = None
+                        elif menu_selection == 4:
                             menu_open = False
                     continue
 
@@ -1054,18 +1187,18 @@ def main() -> None:
                             cmdlist_open = False
                             char_select_selection = 0
                             char_select_p2_cpu = True
+                            char_select_next_state = GameState.BATTLE
                             _ensure_bgm_for_state(game_state)
                         elif selected == "TRAINING":
                             if start_se is not None:
                                 start_se.play()
-                            game_state = GameState.TRAINING
+                            game_state = GameState.CHAR_SELECT
                             debug_draw = True
                             menu_open = False
-                            p1_round_wins = 0
-                            p2_round_wins = 0
-                            result_winner_side = None
-                            result_menu_selection = 0
-                            reset_match()
+                            cmdlist_open = False
+                            char_select_selection = 0
+                            char_select_p2_cpu = False
+                            char_select_next_state = GameState.TRAINING
                             _ensure_bgm_for_state(game_state)
                         elif selected == "SETTING":
                             menu_open = True
@@ -1105,8 +1238,11 @@ def main() -> None:
 
                         sel = char_select_items[char_select_selection]
                         if sel == "START":
-                            cpu_enabled_battle = bool(char_select_p2_cpu)
-                            game_state = GameState.BATTLE
+                            if char_select_next_state == GameState.BATTLE:
+                                cpu_enabled_battle = bool(char_select_p2_cpu)
+                            elif char_select_next_state == GameState.TRAINING:
+                                cpu_enabled_training = bool(char_select_p2_cpu)
+                            game_state = char_select_next_state
                             menu_open = False
                             cmdlist_open = False
                             p1_round_wins = 0
@@ -1130,7 +1266,250 @@ def main() -> None:
                     menu_open = not menu_open
                     if not menu_open:
                         cmdlist_open = False
+                        keyconfig_open = False
+                        keyconfig_waiting_action = None
+                        debugmenu_open = False
+                        training_settings_open = False
+                elif menu_open and event.key == pygame.K_o:
+                    # Back/close shortcut (menu-only) to avoid conflicting with gameplay attack key.
+                    if keyconfig_open:
+                        keyconfig_open = False
+                        keyconfig_waiting_action = None
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif cmdlist_open:
+                        _start_cmdlist_close()
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif debugmenu_open:
+                        debugmenu_open = False
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    elif training_settings_open:
+                        training_settings_open = False
+                        if menu_move_se is not None:
+                            menu_move_se.play()
+                    else:
+                        menu_open = False
+                        if menu_move_se is not None:
+                            menu_move_se.play()
                 elif menu_open:
+                    if training_settings_open and game_state == GameState.TRAINING:
+                        items = [
+                            "P1 HP残量",
+                            "P2 HP残量",
+                            "P1 SPゲージ",
+                            "P2 SPゲージ",
+                            "P2状態固定",
+                            "開始位置",
+                            "P2全ガード",
+                            "戻る",
+                        ]
+                        item_count = len(items)
+
+                        def _apply_training_hp(*, side: int, percent: int) -> None:
+                            nonlocal p1_chip_hp, p2_chip_hp
+                            if side == 1:
+                                p1.hp = int(round(p1.max_hp * (float(percent) / 100.0)))
+                                p1_chip_hp = float(p1.hp)
+                            else:
+                                p2.hp = int(round(p2.max_hp * (float(percent) / 100.0)))
+                                p2_chip_hp = float(p2.hp)
+
+                        def _apply_training_sp(*, side: int, percent: int) -> None:
+                            max_sp = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                            sp = int(round(max_sp * (float(percent) / 100.0)))
+                            if side == 1:
+                                p1.power_gauge = sp
+                            else:
+                                p2.power_gauge = sp
+
+                        def _cycle_p2_lock(delta: int) -> None:
+                            nonlocal training_p2_state_lock
+                            training_p2_state_lock = (int(training_p2_state_lock) + int(delta)) % 4
+
+                        def _cycle_start_pos(delta: int) -> None:
+                            nonlocal training_start_position
+                            training_start_position = (int(training_start_position) + int(delta)) % 3
+
+                        if event.key in {pygame.K_UP, pygame.K_w}:
+                            training_settings_selection = (training_settings_selection - 1) % item_count
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                            training_settings_selection = (training_settings_selection + 1) % item_count
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_LEFT, pygame.K_a}:
+                            idx = int(training_settings_selection)
+                            if idx == 0:
+                                training_hp_percent_p1 = max(0, int(training_hp_percent_p1) - 10)
+                                _apply_training_hp(side=1, percent=int(training_hp_percent_p1))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 1:
+                                training_hp_percent_p2 = max(0, int(training_hp_percent_p2) - 10)
+                                _apply_training_hp(side=2, percent=int(training_hp_percent_p2))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 2:
+                                training_sp_percent_p1 = max(0, int(training_sp_percent_p1) - 10)
+                                _apply_training_sp(side=1, percent=int(training_sp_percent_p1))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 3:
+                                training_sp_percent_p2 = max(0, int(training_sp_percent_p2) - 10)
+                                _apply_training_sp(side=2, percent=int(training_sp_percent_p2))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 4:
+                                _cycle_p2_lock(-1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 5:
+                                _cycle_start_pos(-1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                        elif event.key in {pygame.K_RIGHT, pygame.K_d}:
+                            idx = int(training_settings_selection)
+                            if idx == 0:
+                                training_hp_percent_p1 = min(100, int(training_hp_percent_p1) + 10)
+                                _apply_training_hp(side=1, percent=int(training_hp_percent_p1))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 1:
+                                training_hp_percent_p2 = min(100, int(training_hp_percent_p2) + 10)
+                                _apply_training_hp(side=2, percent=int(training_hp_percent_p2))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 2:
+                                training_sp_percent_p1 = min(100, int(training_sp_percent_p1) + 10)
+                                _apply_training_sp(side=1, percent=int(training_sp_percent_p1))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 3:
+                                training_sp_percent_p2 = min(100, int(training_sp_percent_p2) + 10)
+                                _apply_training_sp(side=2, percent=int(training_sp_percent_p2))
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 4:
+                                _cycle_p2_lock(+1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 5:
+                                _cycle_start_pos(+1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                        elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                            idx = int(training_settings_selection)
+                            if idx == 4:
+                                training_p2_state_lock = (int(training_p2_state_lock) + 1) % 4
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 5:
+                                training_start_position = (int(training_start_position) + 1) % 3
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 6:
+                                training_p2_all_guard = not bool(training_p2_all_guard)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            else:
+                                training_settings_open = False
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                        elif event.key in {pygame.K_ESCAPE, pygame.K_o}:
+                            training_settings_open = False
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        continue
+
+                    if debugmenu_open and game_state == GameState.TRAINING:
+                        debug_items = [
+                            "キー履歴: ",
+                            "P1フレーム情報: ",
+                            "P2フレーム情報: ",
+                            "判定表示: ",
+                            "戻る",
+                        ]
+                        debug_item_count = len(debug_items)
+                        if event.key in {pygame.K_UP, pygame.K_w}:
+                            debugmenu_selection = (debugmenu_selection - 1) % debug_item_count
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                            debugmenu_selection = (debugmenu_selection + 1) % debug_item_count
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_LEFT, pygame.K_a, pygame.K_RIGHT, pygame.K_d, pygame.K_RETURN, pygame.K_u}:
+                            idx = int(debugmenu_selection)
+                            if idx == 0:
+                                debug_ui_show_key_history = not bool(debug_ui_show_key_history)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 1:
+                                debug_ui_show_p1_frames = not bool(debug_ui_show_p1_frames)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 2:
+                                debug_ui_show_p2_frames = not bool(debug_ui_show_p2_frames)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 3:
+                                debug_draw = not bool(debug_draw)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            else:
+                                debugmenu_open = False
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                        elif event.key in {pygame.K_ESCAPE, pygame.K_o}:
+                            debugmenu_open = False
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        continue
+
+                    if keyconfig_open:
+                        if event.key in {pygame.K_UP, pygame.K_w}:
+                            keyconfig_selection = (keyconfig_selection - 1) % max(1, len(keyconfig_actions))
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_DOWN, pygame.K_s}:
+                            keyconfig_selection = (keyconfig_selection + 1) % max(1, len(keyconfig_actions))
+                            if menu_move_se is not None:
+                                menu_move_se.play()
+                        elif event.key in {pygame.K_RIGHT, pygame.K_d}:
+                            if keyconfig_waiting_action is None and keyconfig_actions:
+                                cur_act = str(keyconfig_actions[int(keyconfig_selection)][1])
+                                p1_idx = [i for i, (_l, a) in enumerate(keyconfig_actions) if str(a).startswith("P1_")]
+                                p2_idx = [i for i, (_l, a) in enumerate(keyconfig_actions) if str(a).startswith("P2_")]
+                                if cur_act.startswith("P1_") and p1_idx and p2_idx:
+                                    pos = p1_idx.index(int(keyconfig_selection)) if int(keyconfig_selection) in p1_idx else 0
+                                    keyconfig_selection = int(p2_idx[min(pos, len(p2_idx) - 1)])
+                                    if menu_move_se is not None:
+                                        menu_move_se.play()
+                        elif event.key in {pygame.K_LEFT, pygame.K_a}:
+                            if keyconfig_waiting_action is None and keyconfig_actions:
+                                cur_act = str(keyconfig_actions[int(keyconfig_selection)][1])
+                                p1_idx = [i for i, (_l, a) in enumerate(keyconfig_actions) if str(a).startswith("P1_")]
+                                p2_idx = [i for i, (_l, a) in enumerate(keyconfig_actions) if str(a).startswith("P2_")]
+                                if cur_act.startswith("P2_") and p1_idx and p2_idx:
+                                    pos = p2_idx.index(int(keyconfig_selection)) if int(keyconfig_selection) in p2_idx else 0
+                                    keyconfig_selection = int(p1_idx[min(pos, len(p1_idx) - 1)])
+                                    if menu_move_se is not None:
+                                        menu_move_se.play()
+                        elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
+                            _label, act = keyconfig_actions[keyconfig_selection]
+                            keyconfig_waiting_action = str(act)
+                            if menu_confirm_se is not None:
+                                menu_confirm_se.play()
+                        elif event.key in {pygame.K_ESCAPE, pygame.K_o}:
+                            keyconfig_open = False
+                            keyconfig_waiting_action = None
+                            if event.key == pygame.K_o and menu_move_se is not None:
+                                menu_move_se.play()
+                        continue
+
                     if game_state in {GameState.BATTLE, GameState.TRAINING} and cmdlist_open:
                         if cmdlist_closing:
                             continue
@@ -1152,24 +1531,22 @@ def main() -> None:
                                 cmdlist_preview_start_ms = pygame.time.get_ticks()
                             if menu_confirm_se is not None:
                                 menu_confirm_se.play()
-                        elif event.key == pygame.K_ESCAPE:
+                        elif event.key in {pygame.K_ESCAPE, pygame.K_o}:
                             _start_cmdlist_close()
+                            if event.key == pygame.K_o and menu_move_se is not None:
+                                menu_move_se.play()
                         continue
 
                     if game_state in {GameState.BATTLE, GameState.TRAINING}:
-                        _items = [
-                            "res",
-                            "bgm",
-                            "se",
-                            "cmdlist",
-                            "back",
-                            "close",
-                        ]
+                        _items = ["res", "bgm", "se", "cmdlist", "keyconfig", "debug", "back", "close"]
+                        if game_state == GameState.TRAINING:
+                            _items = ["res", "bgm", "se", "cmdlist", "keyconfig", "debug", "training", "back", "close"]
                     else:
                         _items = [
                             "res",
                             "bgm",
                             "se",
+                            "keyconfig",
                             "close",
                         ]
                     menu_item_count = len(_items)
@@ -1210,40 +1587,51 @@ def main() -> None:
                     elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
                         if menu_confirm_se is not None:
                             menu_confirm_se.play()
-                        if menu_selection == 0:
+                        selected_key = _items[int(menu_selection)] if _items else ""
+                        if selected_key == "res":
                             _apply_resolution(resolutions[current_res_index])
                             reset_match()
-                        elif menu_selection == 3 and game_state in {GameState.BATTLE, GameState.TRAINING}:
+                        elif selected_key == "cmdlist":
                             cmdlist_open = True
                             cmdlist_selection = 0
                             cmdlist_preview_start_ms = pygame.time.get_ticks()
                             cmdlist_closing = False
-                        elif menu_selection == 4 and game_state in {GameState.BATTLE, GameState.TRAINING}:
+                        elif selected_key == "keyconfig":
+                            keyconfig_open = True
+                            keyconfig_selection = 0
+                            keyconfig_waiting_action = None
+                        elif selected_key == "debug" and game_state == GameState.TRAINING:
+                            debugmenu_open = True
+                            debugmenu_selection = 0
+                        elif selected_key == "training" and game_state == GameState.TRAINING:
+                            training_settings_open = True
+                            training_settings_selection = 0
+                        elif selected_key == "back" and game_state in {GameState.BATTLE, GameState.TRAINING}:
                             game_state = GameState.TITLE
                             menu_open = False
                             reset_match()
                             effects.clear()
                             projectiles.clear()
                             _ensure_bgm_for_state(game_state)
-                        elif menu_selection == (menu_item_count - 1):
+                        elif selected_key == "close":
                             menu_open = False
-                elif event.key == pygame.K_w:
+                elif event.key == int(keybinds.get("P1_JUMP", pygame.K_w)):
                     p1_jump_pressed = True
-                elif event.key == pygame.K_UP:
+                elif event.key == int(keybinds.get("P2_JUMP", pygame.K_UP)):
                     p2_jump_pressed = True
-                elif event.key == pygame.K_SEMICOLON:
+                elif event.key == int(keybinds.get("P2_ATTACK", pygame.K_SEMICOLON)):
                     p2_attack_id = "P2_L_PUNCH"
-                elif event.key == pygame.K_u:
+                elif event.key == int(keybinds.get("P1_LP", pygame.K_u)):
                     p1_attack_id = "P1_U_LP"
-                elif event.key == pygame.K_i:
+                elif event.key == int(keybinds.get("P1_MP", pygame.K_i)):
                     p1_attack_id = "P1_I_MP"
-                elif event.key == pygame.K_o:
+                elif event.key == int(keybinds.get("P1_HP", pygame.K_o)):
                     p1_attack_id = "P1_O_HP"
-                elif event.key == pygame.K_j:
+                elif event.key == int(keybinds.get("P1_LK", pygame.K_j)):
                     p1_attack_id = "P1_J_LK"
-                elif event.key == pygame.K_k:
+                elif event.key == int(keybinds.get("P1_MK", pygame.K_k)):
                     p1_attack_id = "P1_K_MK"
-                elif event.key == pygame.K_l:
+                elif event.key == int(keybinds.get("P1_HK", pygame.K_l)):
                     p1_attack_id = "P1_L_HK"
 
         tick_ms = pygame.time.get_ticks()
@@ -1376,6 +1764,8 @@ def main() -> None:
             screen.blit(scaled, (0, 0))
 
             title_surface = title_font.render("CHARACTER SELECT", True, (245, 245, 245))
+            if char_select_next_state == GameState.TRAINING:
+                title_surface = title_font.render("TRAINING SETUP", True, (245, 245, 245))
             title_rect = title_surface.get_rect(center=(constants.SCREEN_WIDTH // 2, 110))
             screen.blit(title_surface, title_rect)
 
@@ -1440,16 +1830,31 @@ def main() -> None:
             overlay.fill((0, 0, 0, 160))
             screen.blit(overlay, (0, 0))
 
-            title = font.render("メニュー (ESC)", True, (255, 255, 255))
-            screen.blit(title, (40, 40))
+            w = int(constants.SCREEN_WIDTH)
+            h = int(constants.SCREEN_HEIGHT)
+            panel_w = int(min(760, w - 80))
+            panel_h = int(min(520, h - 140))
+            panel_x = (w - panel_w) // 2
+            panel_y = (h - panel_h) // 2
+
+            panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel.fill((18, 18, 22, 235))
+            screen.blit(panel, (panel_x, panel_y))
+            pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+            title = font.render("MENU", True, (245, 245, 245))
+            screen.blit(title, (panel_x + 26, panel_y + 18))
 
             res_w, res_h = resolutions[current_res_index]
-            if game_state == GameState.BATTLE:
+            if game_state in {GameState.BATTLE, GameState.TRAINING}:
                 items = [
                     f"解像度: {res_w}x{res_h}  (←→ 変更 / Enter 適用)",
                     f"BGM音量: {bgm_volume_level}  (←→ 変更)",
                     f"効果音音量: {se_volume_level}  (←→ 変更)",
                     "コマンドリスト",
+                    "キーコンフィグ",
+                    "デバッグ表示",
+                    "トレーニング設定",
                     "メニューに戻る",
                     "閉じる",
                 ]
@@ -1458,40 +1863,308 @@ def main() -> None:
                     f"解像度: {res_w}x{res_h}  (←→ 変更 / Enter 適用)",
                     f"BGM音量: {bgm_volume_level}  (←→ 変更)",
                     f"効果音音量: {se_volume_level}  (←→ 変更)",
+                    "キーコンフィグ",
                     "閉じる",
                 ]
-            y = 90
+            y = panel_y + 74
             if not cmdlist_open:
                 for i, text in enumerate(items):
-                    color = (255, 255, 0) if i == menu_selection else (230, 230, 230)
+                    selected = (i == int(menu_selection))
+                    if selected:
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220, 28),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            0,
+                        )
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            1,
+                        )
+                    color = (255, 240, 120) if selected else (230, 230, 230)
                     surf = font.render(text, True, color)
-                    screen.blit(surf, (60, y))
-                    y += 34
+                    screen.blit(surf, (panel_x + 36, y))
+                    y += 44
 
-            if game_state == GameState.BATTLE and cmdlist_open:
+            if game_state == GameState.TRAINING and training_settings_open:
+                overlay5 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
+                overlay5.fill((0, 0, 0, 210))
+                screen.blit(overlay5, (0, 0))
+
+                w = int(constants.SCREEN_WIDTH)
+                h = int(constants.SCREEN_HEIGHT)
+                panel_w = int(min(760, w - 80))
+                panel_h = int(min(520, h - 140))
+                panel_x = (w - panel_w) // 2
+                panel_y = (h - panel_h) // 2
+
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((18, 18, 22, 235))
+                screen.blit(panel, (panel_x, panel_y))
+                pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+                header = title_font.render("TRAINING", True, (245, 245, 245))
+                header_scale_w = max(1, int(round(header.get_width() * 0.38)))
+                header_scale_h = max(1, int(round(header.get_height() * 0.38)))
+                header = pygame.transform.smoothscale(header, (header_scale_w, header_scale_h))
+                screen.blit(header, (panel_x + 26, panel_y + 18))
+
+                sub = keycfg_font.render("←→: 調整 / Enter: 切替 / ESC or O: 戻る", True, (220, 220, 220))
+                screen.blit(sub, (panel_x + 28, panel_y + 58))
+
+                lock_label = "なし"
+                if int(training_p2_state_lock) == 1:
+                    lock_label = "立ち"
+                elif int(training_p2_state_lock) == 2:
+                    lock_label = "しゃがみ"
+                elif int(training_p2_state_lock) == 3:
+                    lock_label = "ジャンプ"
+
+                pos_label = "画面中央"
+                if int(training_start_position) == 1:
+                    pos_label = "左端"
+                elif int(training_start_position) == 2:
+                    pos_label = "右端"
+
+                rows = [
+                    ("P1 HP残量", f"{int(training_hp_percent_p1)}%"),
+                    ("P2 HP残量", f"{int(training_hp_percent_p2)}%"),
+                    ("P1 SPゲージ", f"{int(training_sp_percent_p1)}%"),
+                    ("P2 SPゲージ", f"{int(training_sp_percent_p2)}%"),
+                    ("P2状態固定", lock_label),
+                    ("開始位置", pos_label),
+                    ("P2全ガード", "ON" if bool(training_p2_all_guard) else "OFF"),
+                    ("戻る", ""),
+                ]
+                y = panel_y + 110
+                for i, (label, value) in enumerate(rows):
+                    selected = i == int(training_settings_selection)
+                    if selected:
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220, 28),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            0,
+                        )
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            1,
+                        )
+                    color = (255, 240, 120) if selected else (230, 230, 230)
+                    text = label if not value else f"{label}: {value}"
+                    surf = font.render(text, True, color)
+                    screen.blit(surf, (panel_x + 36, y))
+                    y += 44
+
+            if keyconfig_open:
+                overlay3 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
+                overlay3.fill((0, 0, 0, 210))
+                screen.blit(overlay3, (0, 0))
+
+                w = int(constants.SCREEN_WIDTH)
+                h = int(constants.SCREEN_HEIGHT)
+
+                panel_w = int(min(860, w - 80))
+                panel_h = int(min(560, h - 140))
+                panel_x = (w - panel_w) // 2
+                panel_y = (h - panel_h) // 2
+
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((18, 18, 22, 235))
+                screen.blit(panel, (panel_x, panel_y))
+                pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+                header_txt = "KEY CONFIG"
+                sub_txt = "ESC: 戻る"
+                if keyconfig_waiting_action is not None:
+                    sub_txt = "設定したいキーを押してください (ESCでキャンセル)"
+
+                header = title_font.render(header_txt, True, (245, 245, 245))
+                header_scale_w = max(1, int(round(header.get_width() * 0.42)))
+                header_scale_h = max(1, int(round(header.get_height() * 0.42)))
+                header = pygame.transform.smoothscale(header, (header_scale_w, header_scale_h))
+                screen.blit(header, (panel_x + 26, panel_y + 18))
+
+                sub = font.render(sub_txt, True, (220, 220, 220))
+                screen.blit(sub, (panel_x + 28, panel_y + 58))
+
+                inner_x = panel_x + 26
+                inner_y = panel_y + 98
+                inner_w = panel_w - 52
+                inner_h = panel_h - 140
+
+                col_gap = 26
+                col_w = (inner_w - col_gap) // 2
+                left_x = inner_x
+                right_x = inner_x + col_w + col_gap
+
+                tag_h = 34
+                pygame.draw.rect(screen, (25, 25, 35), pygame.Rect(left_x, inner_y - 44, col_w, tag_h), 0)
+                pygame.draw.rect(screen, (25, 25, 35), pygame.Rect(right_x, inner_y - 44, col_w, tag_h), 0)
+                pygame.draw.rect(screen, (80, 80, 110), pygame.Rect(left_x, inner_y - 44, col_w, tag_h), 1)
+                pygame.draw.rect(screen, (80, 80, 110), pygame.Rect(right_x, inner_y - 44, col_w, tag_h), 1)
+
+                p1_tag = font.render("P1", True, (90, 255, 220))
+                p2_tag = font.render("P2", True, (90, 255, 220))
+                screen.blit(p1_tag, p1_tag.get_rect(midleft=(left_x + 14, inner_y - 27)))
+                screen.blit(p2_tag, p2_tag.get_rect(midleft=(right_x + 14, inner_y - 27)))
+
+                rows: list[tuple[str, str, int]] = []
+                for idx, (label, act) in enumerate(keyconfig_actions):
+                    rows.append((str(label), str(act), int(idx)))
+
+                left_rows = [r for r in rows if r[1].startswith("P1_")]
+                right_rows = [r for r in rows if r[1].startswith("P2_")]
+
+                def _draw_rows(rows_in: list[tuple[str, str, int]], *, x: int) -> None:
+                    y = int(inner_y)
+                    line_h = 44
+                    for label, act, idx in rows_in:
+                        selected = (idx == int(keyconfig_selection)) and (keyconfig_waiting_action is None)
+                        if selected:
+                            pygame.draw.rect(screen, (90, 255, 220, 28), pygame.Rect(x, y - 6, col_w, line_h), 0)
+                            pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(x, y - 6, col_w, line_h), 1)
+
+                        key_code = int(keybinds.get(str(act), default_keybinds.get(str(act), 0)))
+                        key_text = _key_name(key_code)
+
+                        name_c = (245, 245, 245) if selected else (220, 220, 220)
+                        key_c = (255, 240, 120) if selected else (200, 200, 200)
+
+                        left = keycfg_font.render(str(label), True, name_c)
+                        right = keycfg_font.render(str(key_text), True, key_c)
+                        screen.blit(left, (x + 8, y))
+                        screen.blit(right, right.get_rect(midright=(x + col_w - 10, y + (left.get_height() // 2) + 2)))
+
+                        y += line_h
+
+                _draw_rows(left_rows, x=left_x)
+                _draw_rows(right_rows, x=right_x)
+
+                footer = keycfg_font.render("↑↓: 選択 / A← D→: 列移動 / Enter: 変更 / ESC: 戻る", True, (220, 220, 220))
+                screen.blit(footer, footer.get_rect(midbottom=(w // 2, panel_y + panel_h - 18)))
+
+            if game_state == GameState.TRAINING and debugmenu_open:
+                overlay4 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
+                overlay4.fill((0, 0, 0, 210))
+                screen.blit(overlay4, (0, 0))
+
+                w = int(constants.SCREEN_WIDTH)
+                h = int(constants.SCREEN_HEIGHT)
+                panel_w = int(min(760, w - 80))
+                panel_h = int(min(520, h - 140))
+                panel_x = (w - panel_w) // 2
+                panel_y = (h - panel_h) // 2
+
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((18, 18, 22, 235))
+                screen.blit(panel, (panel_x, panel_y))
+                pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+                header = title_font.render("DEBUG", True, (245, 245, 245))
+                header_scale_w = max(1, int(round(header.get_width() * 0.42)))
+                header_scale_h = max(1, int(round(header.get_height() * 0.42)))
+                header = pygame.transform.smoothscale(header, (header_scale_w, header_scale_h))
+                screen.blit(header, (panel_x + 26, panel_y + 18))
+
+                sub = keycfg_font.render("Enter: 切替 / ESC or O: 戻る", True, (220, 220, 220))
+                screen.blit(sub, (panel_x + 28, panel_y + 58))
+
+                dbg_rows = [
+                    ("キー履歴", bool(debug_ui_show_key_history)),
+                    ("P1フレーム情報", bool(debug_ui_show_p1_frames)),
+                    ("P2フレーム情報", bool(debug_ui_show_p2_frames)),
+                    ("判定表示", bool(debug_draw)),
+                    ("戻る", True),
+                ]
+                y = panel_y + 110
+                for i, (label, enabled) in enumerate(dbg_rows):
+                    selected = i == int(debugmenu_selection)
+                    if selected:
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220, 28),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            0,
+                        )
+                        pygame.draw.rect(
+                            screen,
+                            (90, 255, 220),
+                            pygame.Rect(panel_x + 22, y - 6, panel_w - 44, 40),
+                            1,
+                        )
+                    color = (255, 240, 120) if selected else (230, 230, 230)
+                    suffix = "" if label == "戻る" else ("ON" if enabled else "OFF")
+                    text = f"{label}: {suffix}" if suffix else label
+                    surf = font.render(text, True, color)
+                    screen.blit(surf, (panel_x + 36, y))
+                    y += 44
+
+            if game_state in {GameState.BATTLE, GameState.TRAINING} and cmdlist_open:
                 overlay2 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
                 overlay2.fill((0, 0, 0, 210))
                 screen.blit(overlay2, (0, 0))
 
-                panel_x = 40
-                panel_y = 90
-                header = font.render("コマンドリスト (ESCで戻る)", True, (255, 255, 255))
-                screen.blit(header, (panel_x, panel_y - 40))
+                w = int(constants.SCREEN_WIDTH)
+                h = int(constants.SCREEN_HEIGHT)
 
-                left_x = panel_x
-                list_y = panel_y
-                for i, (label, _aid) in enumerate(cmdlist_items):
-                    c = (255, 255, 0) if i == cmdlist_selection else (230, 230, 230)
-                    s = prompt_font.render(label, True, c)
-                    screen.blit(s, (left_x, list_y))
-                    list_y += int(s.get_height() + 8)
+                panel_w = int(min(920, w - 80))
+                panel_h = int(min(600, h - 140))
+                panel_x = (w - panel_w) // 2
+                panel_y = (h - panel_h) // 2
 
-                preview_w = 320
-                preview_h = 260
-                preview_x = constants.SCREEN_WIDTH - preview_w - 40
-                preview_y = 140
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((18, 18, 22, 235))
+                screen.blit(panel, (panel_x, panel_y))
+                pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+                header_txt = "COMMAND LIST"
+                header = title_font.render(header_txt, True, (245, 245, 245))
+                header_scale_w = max(1, int(round(header.get_width() * 0.38)))
+                header_scale_h = max(1, int(round(header.get_height() * 0.38)))
+                header = pygame.transform.smoothscale(header, (header_scale_w, header_scale_h))
+                screen.blit(header, (panel_x + 26, panel_y + 18))
+
+                sub = keycfg_font.render("↑↓: 選択 / Enter: プレビュー / ESC or O: 戻る", True, (220, 220, 220))
+                screen.blit(sub, (panel_x + 28, panel_y + 58))
+
+                inner_x = panel_x + 26
+                inner_y = panel_y + 98
+                inner_w = panel_w - 52
+                inner_h = panel_h - 128
+
+                list_w = int(inner_w * 0.58)
+                prev_w = int(inner_w - list_w - 26)
+                prev_h = int(min(300, inner_h - 10))
+
+                list_x = inner_x
+                list_y0 = inner_y
+
+                preview_x = inner_x + list_w + 26
+                preview_y = inner_y + 18
+                preview_w = max(220, int(prev_w))
+                preview_h = max(200, int(prev_h))
+
+                pygame.draw.rect(screen, (25, 25, 35), pygame.Rect(list_x, list_y0 - 8, list_w, inner_h), 0)
+                pygame.draw.rect(screen, (80, 80, 110), pygame.Rect(list_x, list_y0 - 8, list_w, inner_h), 1)
                 pygame.draw.rect(screen, (20, 20, 20), pygame.Rect(preview_x, preview_y, preview_w, preview_h), 0)
                 pygame.draw.rect(screen, (80, 80, 80), pygame.Rect(preview_x, preview_y, preview_w, preview_h), 2)
+
+                list_y = int(list_y0)
+                row_h = 42
+                for i, (label, _aid) in enumerate(cmdlist_items):
+                    selected = (i == int(cmdlist_selection))
+                    if selected:
+                        pygame.draw.rect(screen, (90, 255, 220, 28), pygame.Rect(list_x + 10, list_y - 6, list_w - 20, row_h), 0)
+                        pygame.draw.rect(screen, (90, 255, 220), pygame.Rect(list_x + 10, list_y - 6, list_w - 20, row_h), 1)
+                    c = (255, 240, 120) if selected else (230, 230, 230)
+                    s = keycfg_font.render(label, True, c)
+                    screen.blit(s, (list_x + 18, list_y))
+                    list_y += row_h
 
                 if cmdlist_items:
                     _label, aid = cmdlist_items[cmdlist_selection]
@@ -1572,22 +2245,18 @@ def main() -> None:
             base_y = constants.SCREEN_HEIGHT // 2 - 20
             for i, name in enumerate(title_menu_items):
                 selected = i == title_menu_selection
-                color = (80, 255, 220) if selected else (210, 210, 210)
                 local_shake = int(3 * math.sin((tick / 120.0) + i)) if selected else 0
 
-                text_surf = menu_font.render(name, True, color)
-                if selected:
-                    w = max(1, int(round(text_surf.get_width() * 1.2)))
-                    h = max(1, int(round(text_surf.get_height() * 1.2)))
-                    text_surf = pygame.transform.smoothscale(text_surf, (w, h))
+                text_color = (255, 240, 120) if selected else (210, 210, 210)
+                text_surf = menu_font.render(name, True, text_color)
 
                 text_rect = text_surf.get_rect(center=(cx + local_shake, base_y + i * 50))
                 screen.blit(text_surf, text_rect)
-                if selected:
-                    if (tick // 250) % 2 == 0:
-                        arrow = menu_font.render("▶", True, (80, 255, 220))
-                        arrow_rect = arrow.get_rect(midright=(text_rect.left - 14, text_rect.centery))
-                        screen.blit(arrow, arrow_rect)
+
+                if selected and (tick // 250) % 2 == 0:
+                    arrow = menu_font.render("▶", True, (90, 255, 220))
+                    arrow_rect = arrow.get_rect(midright=(text_rect.left - 14, text_rect.centery))
+                    screen.blit(arrow, arrow_rect)
 
             pygame.display.flip()
             clock.tick(constants.FPS)
@@ -1597,11 +2266,11 @@ def main() -> None:
         keys = pygame.key.get_pressed()
 
         # move_x は -1/0/+1 の3値にする。
-        p1_move_x = int(keys[pygame.K_d]) - int(keys[pygame.K_a])
-        p2_move_x = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
+        p1_move_x = int(keys[int(keybinds.get("P1_RIGHT", pygame.K_d))]) - int(keys[int(keybinds.get("P1_LEFT", pygame.K_a))])
+        p2_move_x = int(keys[int(keybinds.get("P2_RIGHT", pygame.K_RIGHT))]) - int(keys[int(keybinds.get("P2_LEFT", pygame.K_LEFT))])
 
-        p1_crouch = bool(keys[pygame.K_s])
-        p2_crouch = bool(keys[pygame.K_DOWN])
+        p1_crouch = bool(keys[int(keybinds.get("P1_DOWN", pygame.K_s))])
+        p2_crouch = bool(keys[int(keybinds.get("P2_DOWN", pygame.K_DOWN))])
 
         # 向きは相手の位置から決める（Phase 1 の簡易仕様）。
         p1.facing = 1 if p2.rect.centerx >= p1.rect.centerx else -1
@@ -1612,8 +2281,11 @@ def main() -> None:
             (game_state != GameState.BATTLE) or (int(battle_countdown_frames_left) <= 0)
         )
 
-        # CPU control (P2) in Battle.
-        if game_state == GameState.BATTLE and cpu_enabled_battle and can_play_round:
+        # CPU control (P2)
+        cpu_enabled_now = (game_state == GameState.BATTLE and cpu_enabled_battle) or (
+            game_state == GameState.TRAINING and cpu_enabled_training
+        )
+        if cpu_enabled_now and can_play_round:
             cpu_decision_frames_left = max(0, int(cpu_decision_frames_left) - 1)
             cpu_attack_cooldown = max(0, int(cpu_attack_cooldown) - 1)
             cpu_jump_cooldown = max(0, int(cpu_jump_cooldown) - 1)
@@ -1661,6 +2333,22 @@ def main() -> None:
                 if cpu_jump_cooldown <= 0 and adx > 140 and (random.random() < 0.06):
                     p2_jump_pressed = True
                     cpu_jump_cooldown = int(constants.FPS * 1.0)
+
+        if game_state == GameState.TRAINING and can_play_round:
+            lock = int(training_p2_state_lock)
+            if lock == 1:
+                p2_move_x = 0
+                p2_crouch = False
+                p2_jump_pressed = False
+            elif lock == 2:
+                p2_move_x = 0
+                p2_crouch = True
+                p2_jump_pressed = False
+            elif lock == 3:
+                p2_move_x = 0
+                p2_crouch = False
+                if bool(getattr(p2, "on_ground", False)):
+                    p2_jump_pressed = True
 
         if can_play_round:
             p1.apply_input(
@@ -1741,7 +2429,7 @@ def main() -> None:
             e.update()
         effects = [e for e in effects if not e.finished]
 
-        if game_state == GameState.BATTLE:
+        if game_state in {GameState.BATTLE, GameState.TRAINING}:
             _update_rain_drops(rain_drops)
 
         stage_bounds = pygame.Rect(0, 0, constants.STAGE_WIDTH, constants.STAGE_HEIGHT)
@@ -1824,6 +2512,8 @@ def main() -> None:
             is_guarding = bool(getattr(defender, "can_guard_now", lambda: False)()) and bool(
                 getattr(defender, "is_guarding_intent", lambda: False)()
             )
+            if game_state == GameState.TRAINING and training_p2_all_guard and (defender is p2):
+                is_guarding = True
 
             if is_guarding:
                 chip_ratio = float(getattr(constants, "GUARD_CHIP_DAMAGE_RATIO", 0.0))
@@ -1930,6 +2620,8 @@ def main() -> None:
                 is_guarding = bool(getattr(target, "can_guard_now", lambda: False)()) and bool(
                     getattr(target, "is_guarding_intent", lambda: False)()
                 )
+                if game_state == GameState.TRAINING and training_p2_all_guard and (target is p2):
+                    is_guarding = True
 
                 if is_guarding:
                     damage = int(getattr(pr, "damage", 0))
@@ -2032,51 +2724,54 @@ def main() -> None:
         for pr in projectiles:
             pr.draw(stage_surface)
 
-        if debug_draw:
-            hud_top = 44
-            if p1_key_history:
+        if game_state == GameState.TRAINING:
+            hud_top = 120
+            line_h = int(debug_font.get_linesize())
+            if bool(debug_ui_show_key_history) and p1_key_history:
                 # 左端は入力（コマンド）表示欄として確保する。
                 x = 12
                 y = hud_top
                 for i, t in enumerate(p1_key_history):
-                    surf = font.render(t, True, (240, 240, 240))
-                    stage_surface.blit(surf, (x, y + i * 22))
+                    surf = debug_font.render(t, True, (240, 240, 240))
+                    stage_surface.blit(surf, (x, y + i * line_h))
 
-            p1_info = p1.get_last_move_frame_info()
-            if p1_info is not None:
-                lines = [
-                    f"P1 {p1_info.attack_id}",
-                    f"Action: {p1.get_current_action_id()}  Frame: {p1.get_action_frame_counter()}f",
-                    f"Combo: {p1.get_combo_count()}",
-                    f"Total: {p1_info.total_frames}f",
-                    f"Startup: {p1_info.startup_frames}f",
-                    f"Active: {p1_info.active_frames}f",
-                    f"Recovery: {p1_info.recovery_frames}f",
-                ]
-                # フレーム表示などのデバッグ文字は右へ寄せ、左端は入力欄にする。
-                x = 96
-                y = hud_top
-                for i, t in enumerate(lines):
-                    surf = font.render(t, True, (240, 240, 240))
-                    stage_surface.blit(surf, (x, y + i * 22))
+            if bool(debug_ui_show_p1_frames):
+                p1_info = p1.get_last_move_frame_info()
+                if p1_info is not None:
+                    lines = [
+                        f"P1 {p1_info.attack_id}",
+                        f"アクション: {p1.get_current_action_id()}  フレーム: {p1.get_action_frame_counter()}f",
+                        f"コンボ: {p1.get_combo_count()}",
+                        f"全体: {p1_info.total_frames}f",
+                        f"発生: {p1_info.startup_frames}f",
+                        f"持続: {p1_info.active_frames}f",
+                        f"硬直: {p1_info.recovery_frames}f",
+                    ]
+                    # フレーム表示などのデバッグ文字は右へ寄せ、左端は入力欄にする。
+                    x = 96
+                    y = hud_top
+                    for i, t in enumerate(lines):
+                        surf = debug_font.render(t, True, (240, 240, 240))
+                        stage_surface.blit(surf, (x, y + i * line_h))
 
-            p2_info = p2.get_last_move_frame_info()
-            if p2_info is not None:
-                lines = [
-                    f"P2 {p2_info.attack_id}",
-                    f"Action: {p2.get_current_action_id()}  Frame: {p2.get_action_frame_counter()}f",
-                    f"Combo: {p2.get_combo_count()}",
-                    f"Total: {p2_info.total_frames}f",
-                    f"Startup: {p2_info.startup_frames}f",
-                    f"Active: {p2_info.active_frames}f",
-                    f"Recovery: {p2_info.recovery_frames}f",
-                ]
-                x = constants.STAGE_WIDTH - 12
-                y = 56
-                for i, t in enumerate(lines):
-                    surf = font.render(t, True, (240, 240, 240))
-                    rect = surf.get_rect(topright=(x, y + i * 22))
-                    stage_surface.blit(surf, rect)
+            if bool(debug_ui_show_p2_frames):
+                p2_info = p2.get_last_move_frame_info()
+                if p2_info is not None:
+                    lines = [
+                        f"P2 {p2_info.attack_id}",
+                        f"アクション: {p2.get_current_action_id()}  フレーム: {p2.get_action_frame_counter()}f",
+                        f"コンボ: {p2.get_combo_count()}",
+                        f"全体: {p2_info.total_frames}f",
+                        f"発生: {p2_info.startup_frames}f",
+                        f"持続: {p2_info.active_frames}f",
+                        f"硬直: {p2_info.recovery_frames}f",
+                    ]
+                    x = constants.STAGE_WIDTH - 12
+                    y = hud_top
+                    for i, t in enumerate(lines):
+                        surf = debug_font.render(t, True, (240, 240, 240))
+                        rect = surf.get_rect(topright=(x, y + i * line_h))
+                        stage_surface.blit(surf, rect)
 
         # HPバー描画（上部）。
         # 赤チップ（被ダメージの残り）を遅れて減らす。

@@ -132,6 +132,7 @@ class Player:
         self._shinku_action_id: int | None = None
         self._shinku_spawned: bool = False
         self._shinku_spawn_pending: bool = False
+        self._shinku_lockout_frames_left: int = 0
 
         self._last_punch_pressed_frame: int | None = None
         self._last_kick_pressed_frame: int | None = None
@@ -289,6 +290,7 @@ class Player:
         self._shinku_action_id = None
         self._shinku_spawned = False
         self._shinku_spawn_pending = False
+        self._shinku_lockout_frames_left = 0
 
         self._rush_frames_left = 0
         self._rush_startup_frames_left = 0
@@ -489,6 +491,27 @@ class Player:
         def _can_trigger_special(spec_key: str) -> bool:
             if spec_key == "RUSH":
                 return (not self.is_rushing()) and int(self._rush_recovery_frames_left) <= 0
+            if spec_key == "SHINKU_HADOKEN":
+                if int(getattr(self, "_shinku_lockout_frames_left", 0)) > 0:
+                    return False
+                # Prevent double-trigger while the super's oneshot action is still running.
+                if (
+                    self._action_mode == "oneshot"
+                    and (self._current_action_id is not None)
+                    and (not bool(getattr(self, "_action_finished", False)))
+                ):
+                    if self._shinku_action_id is not None and int(self._current_action_id) == int(self._shinku_action_id):
+                        return False
+                if getattr(self, "_shinku_spawned", False) and (
+                    self._shinku_action_id is not None
+                    and int(self._current_action_id or -1) == int(self._shinku_action_id)
+                ):
+                    return False
+            if spec_key == "HADOKEN":
+                # If Shinku command was just used, 236236 can remain in the buffer and be re-read as 236.
+                # Suppress hadoken while shinku is in lockout to avoid unintended hadoken after a shinku input.
+                if int(getattr(self, "_shinku_lockout_frames_left", 0)) > 0:
+                    return False
             return True
 
         def _trigger(spec_key: str) -> None:
@@ -909,6 +932,16 @@ class Player:
         except Exception:
             pass
 
+        # Lockout to avoid retriggering while command remains in the input buffer.
+        lockout = int(constants.FPS * 1.0)
+        try:
+            info = getattr(self, "_last_move_frame_info", None)
+            if info is not None and str(getattr(info, "attack_id", "")) == "SHINKU_HADOKEN":
+                lockout = int(max(1, getattr(info, "total_frames", lockout)))
+        except Exception:
+            pass
+        self._shinku_lockout_frames_left = max(int(self._shinku_lockout_frames_left), int(lockout))
+
     def consume_hadoken_spawn(self) -> bool:
         if not self._hadoken_spawn_pending:
             return False
@@ -1094,6 +1127,9 @@ class Player:
         if self.hitstop_frames_left > 0:
             self.hitstop_frames_left -= 1
             return
+
+        if int(self._shinku_lockout_frames_left) > 0:
+            self._shinku_lockout_frames_left -= 1
 
         if self.combo_display_frames_left > 0:
             self.combo_display_frames_left -= 1
