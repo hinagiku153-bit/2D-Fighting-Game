@@ -134,6 +134,14 @@ class Player:
         self._shinku_spawn_pending: bool = False
         self._shinku_lockout_frames_left: int = 0
 
+        self._shungoku_active: bool = False
+        self._shungoku_dash_frames_left: int = 0
+        self._shungoku_startup_frames_left: int = 0
+        self._shungoku_dash_dir: int = 1
+        self._shungoku_anim_tick: int = 0
+        self._shungoku_afterimages: list[dict[str, Any]] = []
+        self._shungoku_pending_start: bool = False
+
         self._last_punch_pressed_frame: int | None = None
         self._last_kick_pressed_frame: int | None = None
         self._punch_consumed_for_hadoken_frame: int | None = None
@@ -177,6 +185,17 @@ class Player:
         self._action_finished: bool = False
 
         self._knocked_down: bool = False
+
+        self._ko_down_anim_active: bool = False
+        self._ko_down_anim_index: int = 0
+        self._ko_down_anim_tick: int = 0
+        self._ko_down_anim_frames_per_image: int = 10
+
+        self._down_anim_active: bool = False
+        self._down_anim_index: int = 0
+        self._down_anim_dir: int = 1
+        self._down_anim_tick: int = 0
+        self._down_anim_frames_per_image: int = 8
 
     @property
     def attacking(self) -> bool:
@@ -226,8 +245,9 @@ class Player:
         self._set_action(self._best_action_id([5000]), mode="oneshot")
 
     def enter_knockdown(self) -> None:
-        # KO 用：ダウンモーションへ。
-        # 5040番台が無ければ 5000 などへフォールバック。
+        # ダウンモーションへ。
+        # - HP==0 の場合は KO（復帰なし）
+        # - HP>0 の場合はダウン（起き上がって Idle へ戻る）
         self.hitstop_frames_left = 0
         self.hitstun_frames_left = 0
         self.hitstun_timer = 0
@@ -244,10 +264,28 @@ class Player:
         self.on_ground = True
         self.crouching = False
 
-        self._knocked_down = True
+        is_ko = int(getattr(self, "hp", 0)) <= 0
 
-        action_id = self._best_action_id([5041, 5040, 5042, 5043, 5044, 5000])
-        self._set_action(int(action_id), mode="oneshot")
+        # KO: 専用の停止ダウン（復帰なし）。
+        if is_ko:
+            self._knocked_down = True
+            self._ko_down_anim_active = True
+            self._ko_down_anim_index = 0
+            self._ko_down_anim_tick = 0
+            self._down_anim_active = False
+            action_id = self._best_action_id([5041, 5040, 5042, 5043, 5044, 5000])
+            self._set_action(int(action_id), mode="oneshot")
+            return
+
+        # Non-KO: 起き上がりまで再生するダウン。
+        self._knocked_down = False
+        self._ko_down_anim_active = False
+        self._down_anim_active = True
+        self._down_anim_index = 0
+        self._down_anim_dir = 1
+        self._down_anim_tick = 0
+        if self._air_actions:
+            self._set_action(self._best_action_id([0]), mode="loop")
 
     def reset_round_state(self) -> None:
         # Round start reset: clear transient state that should not carry over.
@@ -255,6 +293,15 @@ class Player:
         self.hitstun_frames_left = 0
         self.hitstun_timer = 0
         self.blockstun_frames_left = 0
+
+        self._ko_down_anim_active = False
+        self._ko_down_anim_index = 0
+        self._ko_down_anim_tick = 0
+
+        self._down_anim_active = False
+        self._down_anim_index = 0
+        self._down_anim_dir = 1
+        self._down_anim_tick = 0
 
         self._attack_frames_left = 0
         self._attack_has_hit = False
@@ -367,6 +414,20 @@ class Player:
 
         self._push_direction_history(move_x=inp.move_x, crouch=inp.crouch)
 
+        if int(getattr(self, "_shungoku_startup_frames_left", 0)) > 0 or bool(getattr(self, "_shungoku_active", False)):
+            self.vel_x = 0.0
+            self.vel_y = 0.0
+            self.crouching = False
+            self.holding_back = False
+            return
+
+        if bool(self._down_anim_active):
+            self.vel_x = 0.0
+            self.vel_y = 0.0
+            self.crouching = False
+            self.holding_back = False
+            return
+
         if inp.attack_id is not None:
             # 突進（RUSH）は「方向コマンド + キック」で成立するため、
             # 通常キック攻撃を start_attack する前に判定して優先的に発動する。
@@ -450,6 +511,7 @@ class Player:
         did_rush = False
         did_hadoken = False
         did_shinku = False
+        did_shungoku = False
         clear_attack_id = False
 
         tokens = [t for (_f, t) in self.input_buffer]
@@ -491,6 +553,16 @@ class Player:
         def _can_trigger_special(spec_key: str) -> bool:
             if spec_key == "RUSH":
                 return (not self.is_rushing()) and int(self._rush_recovery_frames_left) <= 0
+            if spec_key == "SHUNGOKUSATSU":
+                mx = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                if int(self.power_gauge) < mx:
+                    return False
+                # HP 20% 以下でのみ発動可能
+                mhp = int(getattr(self, "max_hp", 0))
+                hp = int(getattr(self, "hp", 0))
+                if mhp <= 0:
+                    return False
+                return hp <= int(round(mhp * 0.20))
             if spec_key == "SHINKU_HADOKEN":
                 if int(getattr(self, "_shinku_lockout_frames_left", 0)) > 0:
                     return False
@@ -515,10 +587,20 @@ class Player:
             return True
 
         def _trigger(spec_key: str) -> None:
-            nonlocal did_rush, did_hadoken, did_shinku
+            nonlocal did_rush, did_hadoken, did_shinku, did_shungoku
             if spec_key == "RUSH":
                 self.start_rush()
                 did_rush = True
+                return
+            if spec_key == "SHUNGOKUSATSU":
+                mx = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                if int(self.power_gauge) < mx:
+                    return
+                if not self.spend_power(mx):
+                    return
+                # main 側の時止め演出後に実際の start を行う。
+                self._shungoku_pending_start = True
+                did_shungoku = True
                 return
             if spec_key == "HADOKEN":
                 self.start_hadoken()
@@ -553,6 +635,7 @@ class Player:
                         "did_rush": did_rush,
                         "did_hadoken": did_hadoken,
                         "did_shinku": did_shinku,
+                        "did_shungoku": did_shungoku,
                         "clear_attack_id": clear_attack_id,
                     }
 
@@ -569,6 +652,7 @@ class Player:
                         "did_rush": did_rush,
                         "did_hadoken": did_hadoken,
                         "did_shinku": did_shinku,
+                        "did_shungoku": did_shungoku,
                         "clear_attack_id": clear_attack_id,
                     }
 
@@ -576,8 +660,37 @@ class Player:
             "did_rush": did_rush,
             "did_hadoken": did_hadoken,
             "did_shinku": did_shinku,
+            "did_shungoku": did_shungoku,
             "clear_attack_id": clear_attack_id,
         }
+
+    def start_shungokusatsu(self) -> None:
+        self.attack_buffer.clear()
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = None
+
+        self._shungoku_active = True
+        self._shungoku_startup_frames_left = 8
+        self._shungoku_dash_frames_left = int(constants.FPS * 1.2)
+        self._shungoku_dash_dir = 1 if int(getattr(self, "facing", 1)) >= 0 else -1
+        self._shungoku_anim_tick = 0
+        self._shungoku_afterimages = []
+        self._shungoku_pending_start = False
+        try:
+            startup = 8
+            active = int(self._shungoku_dash_frames_left)
+            recovery = int(constants.FPS * 0.4)
+            total = max(1, int(startup + active + recovery))
+            self._last_move_frame_info = MoveFrameInfo(
+                attack_id="SHUNGOKUSATSU",
+                total_frames=total,
+                startup_frames=int(startup),
+                active_frames=int(active),
+                recovery_frames=int(recovery),
+            )
+        except Exception:
+            pass
 
     def _push_attack_buffer(self, attack_id: str) -> None:
         buf_frames = int(getattr(constants, "INPUT_BUFFER_FRAMES", 10))
@@ -863,6 +976,21 @@ class Player:
         self._rush_startup_frames_left = int(getattr(constants, "RUSH_STARTUP_FRAMES", 6))
         self._rush_frames_left = int(getattr(constants, "RUSH_FRAMES", 18))
 
+        try:
+            startup = int(self._rush_startup_frames_left)
+            active = int(self._rush_frames_left)
+            recovery = int(getattr(constants, "RUSH_RECOVERY_FRAMES", 12))
+            total = max(1, int(startup + active + recovery))
+            self._last_move_frame_info = MoveFrameInfo(
+                attack_id="RUSH",
+                total_frames=total,
+                startup_frames=max(0, int(startup)),
+                active_frames=max(0, int(active)),
+                recovery_frames=max(0, int(recovery)),
+            )
+        except Exception:
+            pass
+
         self._rush_effect_pending = True
         self._rush_effect_pos = (int(self.rect.centerx), int(self.rect.bottom) - 12)
 
@@ -1127,6 +1255,46 @@ class Player:
         if self.hitstop_frames_left > 0:
             self.hitstop_frames_left -= 1
             return
+
+        if bool(getattr(self, "_shungoku_active", False)) or int(getattr(self, "_shungoku_startup_frames_left", 0)) > 0:
+            self._shungoku_anim_tick = int(getattr(self, "_shungoku_anim_tick", 0)) + 1
+
+        if getattr(self, "_shungoku_afterimages", None):
+            new_buf: list[dict[str, Any]] = []
+            for it in list(self._shungoku_afterimages):
+                ttl = int(it.get("ttl", 0)) - 1
+                if ttl > 0:
+                    it["ttl"] = int(ttl)
+                    new_buf.append(it)
+            self._shungoku_afterimages = new_buf
+
+        if bool(self._down_anim_active):
+            self._down_anim_tick += 1
+            if int(self._down_anim_tick) >= int(self._down_anim_frames_per_image):
+                self._down_anim_tick = 0
+                self._down_anim_index += int(self._down_anim_dir)
+                if int(self._down_anim_dir) > 0 and int(self._down_anim_index) >= 7:
+                    self._down_anim_index = 7
+                    self._down_anim_dir = -1
+                elif int(self._down_anim_dir) < 0 and int(self._down_anim_index) <= 0:
+                    self._down_anim_index = 0
+                    self._down_anim_active = False
+                    if self._air_actions:
+                        self._set_action(self._best_action_id([0]), mode="loop")
+            self.vel_x = 0.0
+            self.vel_y = 0.0
+            self.knockback_vx = 0.0
+            self.on_ground = True
+            self.crouching = False
+            self.rect.midbottom = (int(self.pos_x), int(self.pos_y))
+            return
+
+        if bool(self._ko_down_anim_active):
+            self._ko_down_anim_tick += 1
+            if int(self._ko_down_anim_tick) >= int(self._ko_down_anim_frames_per_image):
+                self._ko_down_anim_tick = 0
+                if int(self._ko_down_anim_index) < 7:
+                    self._ko_down_anim_index += 1
 
         if int(self._shinku_lockout_frames_left) > 0:
             self._shinku_lockout_frames_left -= 1
@@ -1653,12 +1821,110 @@ class Player:
         elif self.knockback_vx < -vx_max:
             self.knockback_vx = -vx_max
 
+    def push_shungoku_afterimage(self) -> None:
+        if not bool(getattr(self, "_shungoku_active", False)):
+            return
+        if not bool(getattr(self, "_sprites", {})):
+            return
+        tick = int(getattr(self, "_shungoku_anim_tick", 0))
+        idx = int((tick // 2) % 3)
+        key = (1000, int(idx))
+        if self._sprites.get(key) is None:
+            return
+        it = {
+            "x": int(self.rect.centerx),
+            "y": int(self.rect.bottom),
+            "facing": int(self.facing),
+            "key": (int(key[0]), int(key[1])),
+            "ttl": 12,
+        }
+        self._shungoku_afterimages.append(it)
+        if len(self._shungoku_afterimages) > 8:
+            self._shungoku_afterimages = self._shungoku_afterimages[-8:]
+
     def draw(self, surface: pygame.Surface, *, debug_draw: bool) -> None:
         # Sprite がロードできているなら、AIR の (group,index) を使って描画する。
         drawn_sprite = False
 
+        if getattr(self, "_shungoku_afterimages", None):
+            buf = list(self._shungoku_afterimages)
+            for i, it in enumerate(buf):
+                key = it.get("key")
+                if not (isinstance(key, (tuple, list)) and len(key) >= 2):
+                    continue
+                img = self._sprites.get((int(key[0]), int(key[1])))
+                if img is None:
+                    continue
+                x = int(it.get("x", self.rect.centerx)) - (img.get_width() // 2)
+                y = int(it.get("y", self.rect.bottom)) - img.get_height()
+                if int(it.get("facing", self.facing)) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                img2 = img.copy()
+                ttl = max(0, int(it.get("ttl", 0)))
+                a = int(max(0, min(255, 18 + (ttl * 18))))
+                a = int(a * (0.70 - (0.06 * i)))
+                img2.set_alpha(max(0, min(255, a)))
+                surface.blit(img2, (x, y))
+
+        if (not drawn_sprite) and (bool(getattr(self, "_shungoku_active", False)) or int(getattr(self, "_shungoku_startup_frames_left", 0)) > 0 or bool(getattr(self, "_shungoku_pending_start", False))):
+            tick = int(getattr(self, "_shungoku_anim_tick", 0))
+            idx = int(min(2, max(0, (tick // 2))))
+            key = (1000, int(idx))
+            img = self._sprites.get(key)
+            if img is not None:
+                x = int(self.rect.centerx) - (img.get_width() // 2)
+                y = int(self.rect.bottom) - img.get_height()
+                if int(self.facing) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                surface.blit(img, (x, y))
+                drawn_sprite = True
+
+        if bool(self._down_anim_active):
+            seq: list[tuple[int, int]] = [
+                (5032, 0),
+                (5032, 10),
+                (5032, 20),
+                (5032, 30),
+                (5032, 40),
+                (5032, 50),
+                (5040, 0),
+                (5040, 10),
+            ]
+            idx = max(0, min(len(seq) - 1, int(self._down_anim_index)))
+            key = seq[int(idx)]
+            img = self._sprites.get((int(key[0]), int(key[1])))
+            if img is not None:
+                x = int(self.rect.centerx) - (img.get_width() // 2)
+                y = int(self.rect.bottom) - img.get_height()
+                if int(self.facing) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                surface.blit(img, (x, y))
+                drawn_sprite = True
+
+        if (not drawn_sprite) and bool(self._ko_down_anim_active):
+            seq: list[tuple[int, int]] = [
+                (5032, 0),
+                (5032, 10),
+                (5032, 20),
+                (5032, 30),
+                (5032, 40),
+                (5032, 50),
+                (5040, 0),
+                (5040, 10),
+            ]
+            idx = max(0, min(len(seq) - 1, int(self._ko_down_anim_index)))
+            key = seq[int(idx)]
+            img = self._sprites.get((int(key[0]), int(key[1])))
+            if img is not None:
+                x = int(self.rect.centerx) - (img.get_width() // 2)
+                y = int(self.rect.bottom) - img.get_height()
+                if int(self.facing) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                surface.blit(img, (x, y))
+                drawn_sprite = True
+
         # 突進中は 6520-2 を固定表示（アニメーションのpngのまま突進）。
-        if self.is_rushing():
+        if (not drawn_sprite) and self.is_rushing():
             key = (6520, 2)
             img = self._sprites.get(key)
             if img is not None:

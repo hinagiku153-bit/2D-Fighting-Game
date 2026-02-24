@@ -75,6 +75,76 @@ class Effect:
 
 
 @dataclass
+class StaticImageBurstEffect:
+    image: pygame.Surface
+    pos: tuple[int, int]
+    total_frames: int = 5
+    start_scale: float = 1.2
+    end_scale: float = 0.8
+    fadeout_frames: int = 2
+    angle_deg: float = 0.0
+    flip_x: bool = False
+
+    _frame: int = 0
+    _finished: bool = False
+
+    @property
+    def finished(self) -> bool:
+        return self._finished
+
+    def update(self) -> None:
+        if self._finished:
+            return
+        self._frame += 1
+        if int(self._frame) >= int(max(1, self.total_frames)):
+            self._finished = True
+
+    def draw(self, surface: pygame.Surface) -> None:
+        if self._finished:
+            return
+
+        total = int(max(1, self.total_frames))
+        i = int(max(0, min(total - 1, self._frame)))
+        t = 0.0 if total <= 1 else float(i) / float(total - 1)
+
+        scale = float(self.start_scale) + (float(self.end_scale) - float(self.start_scale)) * float(t)
+
+        # Fade out rapidly near the end.
+        alpha_mul = 1.0
+        fo = int(max(0, self.fadeout_frames))
+        if fo > 0 and i >= (total - fo):
+            u = float(i - (total - fo)) / float(max(1, fo))
+            # Rapid curve: 1 -> 0 quickly.
+            alpha_mul = max(0.0, min(1.0, (1.0 - u) ** 3))
+
+        img = self.image
+        try:
+            if bool(self.flip_x):
+                img = pygame.transform.flip(img, True, False)
+            # rotozoom preserves alpha and handles both rotation + scale.
+            img = pygame.transform.rotozoom(img, float(self.angle_deg), float(scale))
+        except Exception:
+            pass
+
+        if alpha_mul < 1.0:
+            try:
+                img = img.copy()
+                img.set_alpha(int(round(255 * float(alpha_mul))))
+            except Exception:
+                pass
+
+        x, y = self.pos
+        try:
+            surface.blit(
+                img,
+                (x - (img.get_width() // 2), y - (img.get_height() // 2)),
+                special_flags=pygame.BLEND_RGBA_ADD,
+            )
+        except Exception:
+            surface.blit(img, (x - (img.get_width() // 2), y - (img.get_height() // 2)))
+
+
+@dataclass
 class Projectile:
     pos: pygame.Vector2
     vel: pygame.Vector2

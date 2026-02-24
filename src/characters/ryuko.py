@@ -23,6 +23,14 @@ RYUKO = CharacterDefinition(
     hadoken_action_candidates=[6040, 3000, 3050],
     shinku_action_candidates=[int(getattr(constants, "SHINKU_HADOKEN_ACTION_ID", 8000))],
     specials=[
+        SpecialSpec(
+            key="SHUNGOKUSATSU",
+            sequences=[["BTN:P", "BTN:P", "DIR:F", "BTN:K", "BTN:P"]],
+            immediate_attack_ids={"P1_U_LP", "P1_I_MP", "P1_O_HP", "P2_L_PUNCH", "P1_J_LK", "P1_K_MK", "P1_L_HK"},
+            early_consume_key="punch_shinku",
+            requires_power=False,
+        ),
+
         # Priority: rush > shinku > hadoken (matches prior behavior where rush is checked early)
         SpecialSpec(
             key="RUSH",

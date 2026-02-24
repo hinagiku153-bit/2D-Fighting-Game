@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
 from enum import Enum, auto
 import json
 import math
@@ -13,6 +15,7 @@ from typing import Any
 import pygame
 
 from src.entities.effect import Effect
+from src.entities.effect import StaticImageBurstEffect
 from src.entities.effect import Projectile
 from src.entities.effect import SuperProjectile
 from src.entities.player import Player, PlayerInput
@@ -28,6 +31,33 @@ class GameState(Enum):
     TRAINING = auto()
     CHAR_SELECT = auto()
     RESULT = auto()
+
+
+class FrameState(Enum):
+    IDLE = auto()
+    STARTUP = auto()
+    ACTIVE = auto()
+    RECOVERY = auto()
+    STUN = auto()
+    SPECIAL = auto()
+
+
+@dataclass(frozen=True)
+class FrameSample:
+    state: FrameState
+    hitstop: bool = False
+    combo: bool = False
+
+
+class FrameDataTracker:
+    def __init__(self, *, max_frames: int) -> None:
+        self._buf: deque[FrameSample] = deque(maxlen=max(1, int(max_frames)))
+
+    def push(self, sample: FrameSample) -> None:
+        self._buf.append(sample)
+
+    def items(self) -> list[FrameSample]:
+        return list(self._buf)
 
 
 def _load_stage_frames() -> list[pygame.Surface]:
@@ -157,6 +187,8 @@ def main() -> None:
     se_volume_level = int(settings.get("se_volume_level", 60))
     se_volume_level = max(0, min(100, se_volume_level))
 
+    frame_meter_enabled = bool(settings.get("frame_meter_enabled", True))
+
     default_keybinds: dict[str, int] = {
         "P1_LEFT": int(pygame.K_a),
         "P1_RIGHT": int(pygame.K_d),
@@ -173,6 +205,8 @@ def main() -> None:
         "P2_DOWN": int(pygame.K_DOWN),
         "P2_JUMP": int(pygame.K_UP),
         "P2_ATTACK": int(pygame.K_SEMICOLON),
+        "FIELD_RESET": int(pygame.K_r),
+        # backward-compat (old save key)
         "QUICK_RESET": int(pygame.K_r),
     }
 
@@ -185,7 +219,16 @@ def main() -> None:
                     try:
                         keybinds[str(k)] = int(v)
                     except (TypeError, ValueError):
-                        pass
+                        continue
+    except Exception:
+        pass
+
+    # backward-compat: if the config had QUICK_RESET only, map it to FIELD_RESET.
+    try:
+        if "FIELD_RESET" not in keybinds and "QUICK_RESET" in keybinds:
+            keybinds["FIELD_RESET"] = int(keybinds.get("QUICK_RESET", pygame.K_r))
+        if "FIELD_RESET" in keybinds and "QUICK_RESET" not in keybinds:
+            keybinds["QUICK_RESET"] = int(keybinds.get("FIELD_RESET", pygame.K_r))
     except Exception:
         pass
 
@@ -208,13 +251,15 @@ def main() -> None:
         prompt_font = pygame.font.Font(str(jp_font_path), 32)
         keycfg_font = pygame.font.Font(str(jp_font_path), 26)
         debug_font = pygame.font.Font(str(jp_font_path), 22)
+        frame_meter_adv_font = pygame.font.Font(str(jp_font_path), 36)
         menu_font = pygame.font.SysFont(mono_font_name, 34)
     else:
-        font = pygame.font.SysFont(mono_font_name, 28)
-        title_font = pygame.font.SysFont(mono_font_name, 72)
-        prompt_font = pygame.font.SysFont(mono_font_name, 32)
-        keycfg_font = pygame.font.SysFont(mono_font_name, 26)
-        debug_font = pygame.font.SysFont(mono_font_name, 22)
+        font = pygame.font.SysFont("meiryo", 28)
+        title_font = pygame.font.SysFont("meiryo", 72)
+        prompt_font = pygame.font.SysFont("meiryo", 32)
+        keycfg_font = pygame.font.SysFont("meiryo", 26)
+        debug_font = pygame.font.SysFont("meiryo", 22)
+        frame_meter_adv_font = pygame.font.SysFont("meiryo", 36)
         menu_font = pygame.font.SysFont(mono_font_name, 34)
 
     def _actions_have_frame_clsns(actions: list[dict[str, Any]]) -> bool:
@@ -401,6 +446,37 @@ def main() -> None:
             spark_frames = frames
             break
 
+    hit_fx_img: pygame.Surface | None = None
+    guard_fx_img: pygame.Surface | None = None
+    try:
+        hit_fx_path = resource_path(Path("assets/images/effect/hit.png"))
+        if hit_fx_path.exists() and hit_fx_path.is_file():
+            hit_img = pygame.image.load(str(hit_fx_path)).convert_alpha()
+            try:
+                s = 0.10
+                w = max(1, int(round(hit_img.get_width() * s)))
+                h = max(1, int(round(hit_img.get_height() * s)))
+                hit_img = pygame.transform.smoothscale(hit_img, (w, h))
+            except Exception:
+                pass
+            hit_fx_img = hit_img
+    except Exception:
+        hit_fx_img = None
+    try:
+        guard_fx_path = resource_path(Path("assets/images/effect/guard.png"))
+        if guard_fx_path.exists() and guard_fx_path.is_file():
+            guard_img = pygame.image.load(str(guard_fx_path)).convert_alpha()
+            try:
+                s = 0.10
+                w = max(1, int(round(guard_img.get_width() * s)))
+                h = max(1, int(round(guard_img.get_height() * s)))
+                guard_img = pygame.transform.smoothscale(guard_img, (w, h))
+            except Exception:
+                pass
+            guard_fx_img = guard_img
+    except Exception:
+        guard_fx_img = None
+
     effects: list[Effect] = []
     projectiles: list[Projectile] = []
 
@@ -538,13 +614,13 @@ def main() -> None:
 
     # 判定枠線（Hurtbox/Pushbox/Hitbox）を描画するかどうか。
     # F3 で切り替える。
-    debug_draw = constants.DEBUG_DRAW_DEFAULT
+    debug_draw = bool(settings.get("debug_draw", constants.DEBUG_DRAW_DEFAULT))
 
     debugmenu_open = False
     debugmenu_selection = 0
-    debug_ui_show_key_history = True
-    debug_ui_show_p1_frames = True
-    debug_ui_show_p2_frames = True
+    debug_ui_show_key_history = bool(settings.get("debug_ui_show_key_history", True))
+    debug_ui_show_p1_frames = bool(settings.get("debug_ui_show_p1_frames", True))
+    debug_ui_show_p2_frames = bool(settings.get("debug_ui_show_p2_frames", True))
 
     # ESC で表示する簡易メニュー。
     menu_open = False
@@ -558,17 +634,70 @@ def main() -> None:
     keyconfig_open = False
     keyconfig_selection = 0
     keyconfig_waiting_action: str | None = None
+    keyconfig_scroll_left = 0
+    keyconfig_scroll_right = 0
 
     training_settings_open = False
     training_settings_selection = 0
+    training_settings_scroll = 0
     training_hp_percent_p1 = 100
     training_hp_percent_p2 = 100
     training_sp_percent_p1 = 100
     training_sp_percent_p2 = 100
     training_p2_all_guard = False
+    training_auto_recover_hp = False
+    training_auto_recover_sp = False
 
     training_p2_state_lock = 0
     training_start_position = 0
+
+    frame_meter_p1 = FrameDataTracker(max_frames=120)
+    frame_meter_p2 = FrameDataTracker(max_frames=120)
+    frame_meter_adv_value: int | None = None
+    frame_meter_adv_frames_left: int = 0
+    frame_meter_adv_attacker_side: int = 0
+    frame_meter_paused: bool = False
+    frame_meter_idle_run: int = 0
+
+    frame_meter_last_action_id_p1: int | None = None
+    frame_meter_last_action_id_p2: int | None = None
+    frame_meter_last_action_fc_p1: int = 0
+    frame_meter_last_action_fc_p2: int = 0
+    frame_meter_synth_action_fc_p1: int = 0
+    frame_meter_synth_action_fc_p2: int = 0
+
+    shungoku_cine_frames_left: int = 0
+    shungoku_flash_frames_left: int = 0
+    shungoku_finish_frames_left: int = 0
+    shungoku_attacker_side: int = 0
+    shungoku_defender_side: int = 0
+    shungoku_hit_se_cooldown: int = 0
+
+    shungoku_stage_bg_img: pygame.Surface | None = None
+    shungoku_ko_se: pygame.mixer.Sound | None = None
+    shungoku_super_se: pygame.mixer.Sound | None = None
+    shungoku_asura_se: pygame.mixer.Sound | None = None
+    shungoku_asura_channel: pygame.mixer.Channel | None = None
+    stage_bg_override_img: pygame.Surface | None = None
+    bgm_suspended: bool = False
+
+    shungoku_ko_anim_side: int = 0
+    shungoku_ko_anim_idx: int = 1
+    shungoku_ko_anim_tick: int = 0
+    shungoku_ko_anim_frames_per_image: int = 4
+
+    shungoku_pending_damage: int = 0
+    shungoku_pending_apply: bool = False
+    shungoku_pending_ko: bool = False
+
+    shungoku_posthit_lock_side: int = 0
+    shungoku_posthit_lock_defender_side: int = 0
+
+    shungoku_pan_frames_left: int = 0
+    shungoku_pan_total_frames: int = 12
+    shungoku_pan_target_px: int = 0
+
+    shungoku_super_se_cooldown: int = 0
 
     keyconfig_actions: list[tuple[str, str]] = [
         ("P1 左", "P1_LEFT"),
@@ -586,7 +715,7 @@ def main() -> None:
         ("P2 下", "P2_DOWN"),
         ("P2 ジャンプ", "P2_JUMP"),
         ("P2 攻撃", "P2_ATTACK"),
-        ("クイックリセット", "QUICK_RESET"),
+        ("フィールドリセット(トレモ専用)", "FIELD_RESET"),
     ]
 
     cmdlist_items: list[tuple[str, int]] = [
@@ -707,6 +836,34 @@ def main() -> None:
     stage_bg_frames: list[pygame.Surface] = []
     rain_drops = _init_rain_drops(90)
 
+    shungoku_stage_path = resource_path(Path("assets/images/stage/瞬獄殺.png"))
+    if shungoku_stage_path.exists():
+        try:
+            shungoku_stage_bg_img = pygame.image.load(str(shungoku_stage_path)).convert_alpha()
+        except pygame.error:
+            shungoku_stage_bg_img = None
+
+    shungoku_ko_se_path = resource_path(Path("assets/sounds/SE/瞬獄殺.mp3"))
+    if shungoku_ko_se_path.exists():
+        try:
+            shungoku_ko_se = pygame.mixer.Sound(str(shungoku_ko_se_path))
+        except pygame.error:
+            shungoku_ko_se = None
+
+    shungoku_super_se_path = resource_path(Path("assets/sounds/SE/超必殺技.wav"))
+    if shungoku_super_se_path.exists():
+        try:
+            shungoku_super_se = pygame.mixer.Sound(str(shungoku_super_se_path))
+        except pygame.error:
+            shungoku_super_se = None
+
+    shungoku_asura_se_path = resource_path(Path("assets/sounds/SE/阿修羅.wav"))
+    if shungoku_asura_se_path.exists():
+        try:
+            shungoku_asura_se = pygame.mixer.Sound(str(shungoku_asura_se_path))
+        except pygame.error:
+            shungoku_asura_se = None
+
     title_bg_img: pygame.Surface | None = None
     preferred_title_bg = resource_path("assets/images/Gemini_Generated_Image_897hvv897hvv897h.png")
     if preferred_title_bg.exists():
@@ -797,6 +954,14 @@ def main() -> None:
         except pygame.error:
             hit_se = None
 
+    guard_se: pygame.mixer.Sound | None = None
+    guard_se_path = resource_path(Path("assets/sounds/SE/ガード.wav"))
+    if guard_se_path.exists():
+        try:
+            guard_se = pygame.mixer.Sound(str(guard_se_path))
+        except pygame.error:
+            guard_se = None
+
     def _apply_se_volume() -> None:
         vol = max(0.0, min(1.0, float(se_volume_level) / 100.0))
         try:
@@ -818,6 +983,14 @@ def main() -> None:
                 beam_se.set_volume(0.40 * vol)
             if hit_se is not None:
                 hit_se.set_volume(0.18 * vol)
+            if shungoku_ko_se is not None:
+                shungoku_ko_se.set_volume(0.22 * vol)
+            if shungoku_super_se is not None:
+                shungoku_super_se.set_volume(0.25 * vol)
+            if shungoku_asura_se is not None:
+                shungoku_asura_se.set_volume(0.22 * vol)
+            if guard_se is not None:
+                guard_se.set_volume(0.18 * vol)
         except Exception:
             pass
 
@@ -846,6 +1019,8 @@ def main() -> None:
 
     def _ensure_bgm_for_state(state: GameState) -> None:
         nonlocal current_bgm
+        if bool(bgm_suspended):
+            return
         if state == GameState.TITLE:
             want = str(title_bgm_path)
             if current_bgm != want:
@@ -882,6 +1057,8 @@ def main() -> None:
 
     super_freeze_frames_left: int = 0
     super_freeze_attacker_side: int = 0
+
+    shungoku_start_queued_side: int = 0
 
     cpu_enabled_battle: bool = True
     cpu_enabled_training: bool = False
@@ -974,6 +1151,43 @@ def main() -> None:
         p1._attack_id = None
         p2._attack_id = None
 
+        nonlocal stage_bg_override_img, bgm_suspended, shungoku_cine_frames_left
+        stage_bg_override_img = None
+        bgm_suspended = False
+        shungoku_cine_frames_left = 0
+
+        nonlocal shungoku_asura_channel
+        try:
+            if shungoku_asura_channel is not None:
+                shungoku_asura_channel.stop()
+        except Exception:
+            pass
+        shungoku_asura_channel = None
+
+        nonlocal shungoku_ko_anim_side, shungoku_ko_anim_idx, shungoku_ko_anim_tick
+        shungoku_ko_anim_side = 0
+        shungoku_ko_anim_idx = 1
+        shungoku_ko_anim_tick = 0
+
+        nonlocal shungoku_pending_damage, shungoku_pending_apply, shungoku_pending_ko
+        shungoku_pending_damage = 0
+        shungoku_pending_apply = False
+        shungoku_pending_ko = False
+
+        nonlocal shungoku_posthit_lock_side, shungoku_posthit_lock_defender_side
+        shungoku_posthit_lock_side = 0
+        shungoku_posthit_lock_defender_side = 0
+
+        nonlocal shungoku_pan_frames_left, shungoku_pan_target_px
+        shungoku_pan_frames_left = 0
+        shungoku_pan_target_px = 0
+
+        nonlocal shungoku_start_queued_side
+        shungoku_start_queued_side = 0
+
+        nonlocal shungoku_super_se_cooldown
+        shungoku_super_se_cooldown = 0
+
     _apply_resolution((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
     reset_match()
 
@@ -1009,9 +1223,19 @@ def main() -> None:
                 if (
                     game_state == GameState.TRAINING
                     and (not bool(menu_open))
-                    and event.key == int(keybinds.get("QUICK_RESET", pygame.K_r))
+                    and event.key == int(keybinds.get("FIELD_RESET", keybinds.get("QUICK_RESET", pygame.K_r)))
                 ):
                     reset_match()
+                    continue
+
+                if (
+                    game_state in {GameState.BATTLE, GameState.TRAINING}
+                    and (not bool(menu_open))
+                    and event.key == pygame.K_h
+                ):
+                    mx = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                    p1.power_gauge = int(mx)
+                    p1.start_shungokusatsu()
                     continue
 
                 if game_state == GameState.RESULT:
@@ -1300,6 +1524,8 @@ def main() -> None:
                             "P2 HP残量",
                             "P1 SPゲージ",
                             "P2 SPゲージ",
+                            "HP自動回復",
+                            "SP自動回復",
                             "P2状態固定",
                             "開始位置",
                             "P2全ガード",
@@ -1363,10 +1589,18 @@ def main() -> None:
                                 if menu_move_se is not None:
                                     menu_move_se.play()
                             elif idx == 4:
-                                _cycle_p2_lock(-1)
+                                training_auto_recover_hp = not bool(training_auto_recover_hp)
                                 if menu_move_se is not None:
                                     menu_move_se.play()
                             elif idx == 5:
+                                training_auto_recover_sp = not bool(training_auto_recover_sp)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 6:
+                                _cycle_p2_lock(-1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 7:
                                 _cycle_start_pos(-1)
                                 if menu_move_se is not None:
                                     menu_move_se.play()
@@ -1393,24 +1627,40 @@ def main() -> None:
                                 if menu_move_se is not None:
                                     menu_move_se.play()
                             elif idx == 4:
-                                _cycle_p2_lock(+1)
+                                training_auto_recover_hp = not bool(training_auto_recover_hp)
                                 if menu_move_se is not None:
                                     menu_move_se.play()
                             elif idx == 5:
+                                training_auto_recover_sp = not bool(training_auto_recover_sp)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 6:
+                                _cycle_p2_lock(+1)
+                                if menu_move_se is not None:
+                                    menu_move_se.play()
+                            elif idx == 7:
                                 _cycle_start_pos(+1)
                                 if menu_move_se is not None:
                                     menu_move_se.play()
                         elif event.key == pygame.K_RETURN or event.key == pygame.K_u:
                             idx = int(training_settings_selection)
                             if idx == 4:
-                                training_p2_state_lock = (int(training_p2_state_lock) + 1) % 4
+                                training_auto_recover_hp = not bool(training_auto_recover_hp)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             elif idx == 5:
-                                training_start_position = (int(training_start_position) + 1) % 3
+                                training_auto_recover_sp = not bool(training_auto_recover_sp)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             elif idx == 6:
+                                training_p2_state_lock = (int(training_p2_state_lock) + 1) % 4
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 7:
+                                training_start_position = (int(training_start_position) + 1) % 3
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 8:
                                 training_p2_all_guard = not bool(training_p2_all_guard)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
@@ -1430,6 +1680,7 @@ def main() -> None:
                             "P1フレーム情報: ",
                             "P2フレーム情報: ",
                             "判定表示: ",
+                            "フレームメーター: ",
                             "戻る",
                         ]
                         debug_item_count = len(debug_items)
@@ -1445,18 +1696,32 @@ def main() -> None:
                             idx = int(debugmenu_selection)
                             if idx == 0:
                                 debug_ui_show_key_history = not bool(debug_ui_show_key_history)
+                                settings["debug_ui_show_key_history"] = bool(debug_ui_show_key_history)
+                                _save_settings(settings)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             elif idx == 1:
                                 debug_ui_show_p1_frames = not bool(debug_ui_show_p1_frames)
+                                settings["debug_ui_show_p1_frames"] = bool(debug_ui_show_p1_frames)
+                                _save_settings(settings)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             elif idx == 2:
                                 debug_ui_show_p2_frames = not bool(debug_ui_show_p2_frames)
+                                settings["debug_ui_show_p2_frames"] = bool(debug_ui_show_p2_frames)
+                                _save_settings(settings)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             elif idx == 3:
                                 debug_draw = not bool(debug_draw)
+                                settings["debug_draw"] = bool(debug_draw)
+                                _save_settings(settings)
+                                if menu_confirm_se is not None:
+                                    menu_confirm_se.play()
+                            elif idx == 4:
+                                frame_meter_enabled = not bool(frame_meter_enabled)
+                                settings["frame_meter_enabled"] = bool(frame_meter_enabled)
+                                _save_settings(settings)
                                 if menu_confirm_se is not None:
                                     menu_confirm_se.play()
                             else:
@@ -1635,6 +1900,15 @@ def main() -> None:
                     p1_attack_id = "P1_L_HK"
 
         tick_ms = pygame.time.get_ticks()
+
+        if int(shungoku_start_queued_side) in {1, 2} and int(super_freeze_frames_left) <= 0:
+            starter = p1 if int(shungoku_start_queued_side) == 1 else p2
+            if bool(getattr(starter, "_shungoku_pending_start", False)):
+                try:
+                    starter.start_shungokusatsu()
+                except Exception:
+                    pass
+            shungoku_start_queued_side = 0
 
         if super_freeze_frames_left > 0:
             super_freeze_frames_left -= 1
@@ -1933,13 +2207,32 @@ def main() -> None:
                     ("P2 HP残量", f"{int(training_hp_percent_p2)}%"),
                     ("P1 SPゲージ", f"{int(training_sp_percent_p1)}%"),
                     ("P2 SPゲージ", f"{int(training_sp_percent_p2)}%"),
+                    ("HP自動回復", "ON" if bool(training_auto_recover_hp) else "OFF"),
+                    ("SP自動回復", "ON" if bool(training_auto_recover_sp) else "OFF"),
                     ("P2状態固定", lock_label),
                     ("開始位置", pos_label),
                     ("P2全ガード", "ON" if bool(training_p2_all_guard) else "OFF"),
                     ("戻る", ""),
                 ]
-                y = panel_y + 110
-                for i, (label, value) in enumerate(rows):
+                y0 = panel_y + 110
+                line_h = 44
+                y_max = panel_y + panel_h - 56
+                visible = max(1, int((y_max - y0) // line_h))
+                max_scroll = max(0, len(rows) - visible)
+                try:
+                    target_scroll = int(training_settings_scroll)
+                    sel = int(training_settings_selection)
+                    if sel < target_scroll:
+                        target_scroll = sel
+                    if sel >= target_scroll + visible:
+                        target_scroll = sel - visible + 1
+                    training_settings_scroll = max(0, min(max_scroll, int(target_scroll)))
+                except Exception:
+                    training_settings_scroll = 0
+
+                y = int(y0)
+                for i in range(int(training_settings_scroll), min(len(rows), int(training_settings_scroll) + visible)):
+                    label, value = rows[i]
                     selected = i == int(training_settings_selection)
                     if selected:
                         pygame.draw.rect(
@@ -1958,7 +2251,7 @@ def main() -> None:
                     text = label if not value else f"{label}: {value}"
                     surf = font.render(text, True, color)
                     screen.blit(surf, (panel_x + 36, y))
-                    y += 44
+                    y += int(line_h)
 
             if keyconfig_open:
                 overlay3 = pygame.Surface((constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -2017,13 +2310,39 @@ def main() -> None:
                 for idx, (label, act) in enumerate(keyconfig_actions):
                     rows.append((str(label), str(act), int(idx)))
 
-                left_rows = [r for r in rows if r[1].startswith("P1_")]
+                left_rows = [r for r in rows if (r[1].startswith("P1_") or (not r[1].startswith("P2_")))]
                 right_rows = [r for r in rows if r[1].startswith("P2_")]
 
-                def _draw_rows(rows_in: list[tuple[str, str, int]], *, x: int) -> None:
+                line_h = 44
+                visible = max(1, int(inner_h // line_h))
+                left_idxs = [int(idx) for _l, _a, idx in left_rows]
+                right_idxs = [int(idx) for _l, _a, idx in right_rows]
+
+                try:
+                    sel = int(keyconfig_selection)
+                    if sel in left_idxs:
+                        pos = left_idxs.index(sel)
+                        target = int(keyconfig_scroll_left)
+                        if pos < target:
+                            target = pos
+                        if pos >= target + visible:
+                            target = pos - visible + 1
+                        keyconfig_scroll_left = max(0, min(max(0, len(left_rows) - visible), int(target)))
+                    if sel in right_idxs:
+                        pos = right_idxs.index(sel)
+                        target = int(keyconfig_scroll_right)
+                        if pos < target:
+                            target = pos
+                        if pos >= target + visible:
+                            target = pos - visible + 1
+                        keyconfig_scroll_right = max(0, min(max(0, len(right_rows) - visible), int(target)))
+                except Exception:
+                    keyconfig_scroll_left = 0
+                    keyconfig_scroll_right = 0
+
+                def _draw_rows(rows_in: list[tuple[str, str, int]], *, x: int, scroll: int) -> None:
                     y = int(inner_y)
-                    line_h = 44
-                    for label, act, idx in rows_in:
+                    for label, act, idx in rows_in[int(scroll) : int(scroll) + visible]:
                         selected = (idx == int(keyconfig_selection)) and (keyconfig_waiting_action is None)
                         if selected:
                             pygame.draw.rect(screen, (90, 255, 220, 28), pygame.Rect(x, y - 6, col_w, line_h), 0)
@@ -2035,15 +2354,27 @@ def main() -> None:
                         name_c = (245, 245, 245) if selected else (220, 220, 220)
                         key_c = (255, 240, 120) if selected else (200, 200, 200)
 
-                        left = keycfg_font.render(str(label), True, name_c)
+                        # Long labels (e.g. FIELD_RESET) can overlap with key name, so clamp to fit.
+                        label_txt = str(label)
+                        max_label_w = int(max(40, col_w - 10 - 170))
+                        try:
+                            while label_txt and int(keycfg_font.size(label_txt)[0]) > int(max_label_w):
+                                if len(label_txt) <= 1:
+                                    break
+                                label_txt = label_txt[:-1]
+                                if len(label_txt) >= 2:
+                                    label_txt = label_txt[:-1] + "…"
+                        except Exception:
+                            pass
+                        left = keycfg_font.render(str(label_txt), True, name_c)
                         right = keycfg_font.render(str(key_text), True, key_c)
                         screen.blit(left, (x + 8, y))
                         screen.blit(right, right.get_rect(midright=(x + col_w - 10, y + (left.get_height() // 2) + 2)))
 
                         y += line_h
 
-                _draw_rows(left_rows, x=left_x)
-                _draw_rows(right_rows, x=right_x)
+                _draw_rows(left_rows, x=left_x, scroll=int(keyconfig_scroll_left))
+                _draw_rows(right_rows, x=right_x, scroll=int(keyconfig_scroll_right))
 
                 footer = keycfg_font.render("↑↓: 選択 / A← D→: 列移動 / Enter: 変更 / ESC: 戻る", True, (220, 220, 220))
                 screen.blit(footer, footer.get_rect(midbottom=(w // 2, panel_y + panel_h - 18)))
@@ -2079,6 +2410,7 @@ def main() -> None:
                     ("P1フレーム情報", bool(debug_ui_show_p1_frames)),
                     ("P2フレーム情報", bool(debug_ui_show_p2_frames)),
                     ("判定表示", bool(debug_draw)),
+                    ("フレームメーター", bool(frame_meter_enabled)),
                     ("戻る", True),
                 ]
                 y = panel_y + 110
@@ -2350,6 +2682,34 @@ def main() -> None:
                 if bool(getattr(p2, "on_ground", False)):
                     p2_jump_pressed = True
 
+        if can_play_round and int(shungoku_posthit_lock_side) in {1, 2}:
+            defender = p1 if int(shungoku_posthit_lock_defender_side) == 1 else p2
+            defender_down = bool(getattr(defender, "_down_anim_active", False))
+            if not defender_down:
+                attacker = p1 if int(shungoku_posthit_lock_side) == 1 else p2
+                try:
+                    attacker._set_action(attacker._best_action_id([0]), mode="loop")
+                except Exception:
+                    pass
+                shungoku_posthit_lock_side = 0
+                shungoku_posthit_lock_defender_side = 0
+
+                # 瞬獄殺ヒット後：相手が起き上がった瞬間に BGM を再開する。
+                if bool(bgm_suspended):
+                    bgm_suspended = False
+                    _ensure_bgm_for_state(game_state)
+            else:
+                if int(shungoku_posthit_lock_side) == 1:
+                    p1_move_x = 0
+                    p1_crouch = False
+                    p1_jump_pressed = False
+                    p1_attack_id = None
+                else:
+                    p2_move_x = 0
+                    p2_crouch = False
+                    p2_jump_pressed = False
+                    p2_attack_id = None
+
         if can_play_round:
             p1.apply_input(
                 PlayerInput(
@@ -2375,6 +2735,25 @@ def main() -> None:
                     beam_se.play()
                 super_freeze_frames_left = int(getattr(constants, "SUPER_FREEZE_FRAMES", 30))
                 super_freeze_attacker_side = int(side)
+            if bool(res.get("did_shungoku")):
+                nonlocal shungoku_start_queued_side
+                if int(shungoku_start_queued_side) != 0:
+                    return
+                nonlocal shungoku_super_se_cooldown
+                if int(shungoku_super_se_cooldown) <= 0:
+                    if shungoku_super_se is not None:
+                        shungoku_super_se.play()
+                    shungoku_super_se_cooldown = 12
+                super_freeze_frames_left = max(int(super_freeze_frames_left), 10)
+                super_freeze_attacker_side = int(side)
+                shungoku_start_queued_side = int(side)
+                nonlocal shungoku_pan_frames_left, shungoku_pan_target_px
+                shungoku_pan_frames_left = int(shungoku_pan_total_frames)
+                try:
+                    dx = int(player.rect.centerx) - int(constants.STAGE_WIDTH // 2)
+                except Exception:
+                    dx = 0
+                shungoku_pan_target_px = int(max(-18, min(18, round(dx * 0.35))))
 
         if can_play_round:
             early = int(getattr(constants, "COMMAND_BUTTON_EARLY_FRAMES", 2))
@@ -2390,9 +2769,13 @@ def main() -> None:
             if bool(res2.get("clear_attack_id")):
                 p2_attack_id = None
 
+        if int(shungoku_super_se_cooldown) > 0:
+            shungoku_super_se_cooldown = max(0, int(shungoku_super_se_cooldown) - 1)
+
         # 物理更新（KO中/カウント中でもアニメは進める）。
-        p1.update()
-        p2.update()
+        if shungoku_cine_frames_left <= 0:
+            p1.update()
+            p2.update()
 
         # Rush wind/dust effect spawn (ポーリングで確実に発生させる)。
         if rush_dust_frames:
@@ -2441,7 +2824,7 @@ def main() -> None:
         # Pushbox が重なったら、x方向に左右へ押し戻して重なりを解消する。
         p1_push = p1.get_pushbox()
         p2_push = p2.get_pushbox()
-        if p1_push.colliderect(p2_push):
+        if shungoku_cine_frames_left <= 0 and (not bool(getattr(p1, "_shungoku_active", False))) and (not bool(getattr(p2, "_shungoku_active", False))) and p1_push.colliderect(p2_push):
             overlap_x = min(p1_push.right - p2_push.left, p2_push.right - p1_push.left)
             if overlap_x > 0:
                 push = (overlap_x + 1) // 2
@@ -2464,6 +2847,8 @@ def main() -> None:
         # - 攻撃ごとにダメージ/ノックバック/ヒットストップを変える。
         # - 1回の攻撃で1回だけダメージを与える（多段ヒット防止）。
         def _apply_hit(attacker: Player, defender: Player) -> None:
+            if bool(getattr(attacker, "_shungoku_active", False)) or bool(getattr(defender, "_shungoku_active", False)):
+                return
             hitboxes = attacker.get_hitboxes()
             if not hitboxes:
                 return
@@ -2516,6 +2901,14 @@ def main() -> None:
                 is_guarding = True
 
             if is_guarding:
+                was_in_blockstun = bool(getattr(defender, "in_blockstun", False))
+                info = attacker.get_last_move_frame_info()
+                attacker_recovery = int(getattr(info, "recovery_frames", 0)) if info is not None else 0
+                defender_stun = int(getattr(constants, "BLOCKSTUN_DEFAULT_FRAMES", 12))
+                frame_meter_adv_value = int(defender_stun) - int(attacker_recovery)
+                frame_meter_adv_frames_left = int(constants.FPS * 3)
+                frame_meter_adv_attacker_side = 1 if attacker is p1 else 2
+
                 chip_ratio = float(getattr(constants, "GUARD_CHIP_DAMAGE_RATIO", 0.0))
                 chip_damage = int(max(0, round(damage * chip_ratio)))
 
@@ -2545,6 +2938,26 @@ def main() -> None:
                 crouch_guard = bool(getattr(defender, "crouching", False))
                 defender.enter_blockstun(crouching=crouch_guard)
 
+                if (not was_in_blockstun) and guard_se is not None:
+                    guard_se.play()
+
+                if (not was_in_blockstun) and (guard_fx_img is not None):
+                    try:
+                        effects.append(
+                            StaticImageBurstEffect(
+                                image=guard_fx_img,
+                                pos=hit_point,
+                                total_frames=random.randint(3, 5),
+                                start_scale=1.2,
+                                end_scale=0.8,
+                                fadeout_frames=2,
+                                angle_deg=float(random.uniform(0.0, 360.0)),
+                                flip_x=bool(random.random() < 0.5),
+                            )
+                        )
+                    except Exception:
+                        pass
+
                 # セパレーション：攻撃側も少し後ろへ下がる。
                 attacker.apply_knockback(dir_x=-attacker.facing, amount_px=attacker_recoil_px)
                 # ガードではコンボ/ヒット登録は増やさない（多段ガードで無限にカウントされないようにする）。
@@ -2568,6 +2981,14 @@ def main() -> None:
             defender.take_damage(scaled_damage)
             if hit_se is not None:
                 hit_se.play()
+
+            info = attacker.get_last_move_frame_info()
+            attacker_recovery = int(getattr(info, "recovery_frames", 0)) if info is not None else 0
+            defender_stun = int(hit_pause)
+            frame_meter_adv_value = int(defender_stun) - int(attacker_recovery)
+            frame_meter_adv_frames_left = int(constants.FPS * 3)
+            frame_meter_adv_attacker_side = 1 if attacker is p1 else 2
+
             gain_hit = int(getattr(constants, "POWER_GAIN_ON_HIT", 50))
             attacker.add_power(gain_hit)
             half_w = defender.rect.width / 2.0
@@ -2594,6 +3015,23 @@ def main() -> None:
             if spark_frames:
                 effects.append(Effect(frames=spark_frames, pos=hit_point, frames_per_image=2))
 
+            if hit_fx_img is not None:
+                try:
+                    effects.append(
+                        StaticImageBurstEffect(
+                            image=hit_fx_img,
+                            pos=hit_point,
+                            total_frames=random.randint(3, 5),
+                            start_scale=1.2,
+                            end_scale=0.8,
+                            fadeout_frames=2,
+                            angle_deg=float(random.uniform(0.0, 360.0)),
+                            flip_x=bool(random.random() < 0.5),
+                        )
+                    )
+                except Exception:
+                    pass
+
             extra_hitstop = int(getattr(constants, "HIT_EFFECT_EXTRA_HITSTOP_FRAMES", 4))
             hitstop_total = int(hitstop_frames) + max(0, extra_hitstop)
 
@@ -2602,6 +3040,78 @@ def main() -> None:
 
         _apply_hit(p1, p2)
         _apply_hit(p2, p1)
+
+        if shungoku_cine_frames_left <= 0:
+            for side, atk, dfd in ((1, p1, p2), (2, p2, p1)):
+                if not bool(getattr(atk, "_shungoku_active", False)):
+                    continue
+                startup_left = int(getattr(atk, "_shungoku_startup_frames_left", 0))
+                if startup_left > 0:
+                    setattr(atk, "_shungoku_startup_frames_left", int(startup_left) - 1)
+                    continue
+                dash_left = int(getattr(atk, "_shungoku_dash_frames_left", 0))
+                if dash_left <= 0:
+                    setattr(atk, "_shungoku_active", False)
+                    try:
+                        if shungoku_asura_channel is not None:
+                            shungoku_asura_channel.stop()
+                    except Exception:
+                        pass
+                    shungoku_asura_channel = None
+                    continue
+
+                if shungoku_asura_se is not None:
+                    dash_total = int(constants.FPS * 1.2)
+                    if int(dash_left) == int(dash_total) and shungoku_asura_channel is None:
+                        try:
+                            shungoku_asura_channel = shungoku_asura_se.play(loops=-1)
+                        except Exception:
+                            shungoku_asura_channel = None
+
+                speed = 9.0
+                dir_x = int(getattr(atk, "_shungoku_dash_dir", 1))
+                try:
+                    atk.push_shungoku_afterimage()
+                except Exception:
+                    pass
+                atk.pos_x += float(dir_x) * float(speed)
+                atk.rect.midbottom = (int(atk.pos_x), int(atk.pos_y))
+                setattr(atk, "facing", int(dir_x))
+                setattr(atk, "_shungoku_dash_frames_left", int(dash_left) - 1)
+
+                if atk.rect.colliderect(dfd.get_hurtbox()):
+                    setattr(atk, "_shungoku_active", False)
+                    setattr(atk, "_shungoku_dash_frames_left", 0)
+                    shungoku_cine_frames_left = int(constants.FPS * 2.5)
+                    shungoku_flash_frames_left = 0
+                    shungoku_finish_frames_left = int(constants.FPS * 1.2)
+                    shungoku_attacker_side = int(side)
+                    shungoku_defender_side = 2 if int(side) == 1 else 1
+                    shungoku_hit_se_cooldown = 0
+
+                    try:
+                        if shungoku_asura_channel is not None:
+                            shungoku_asura_channel.stop()
+                    except Exception:
+                        pass
+                    shungoku_asura_channel = None
+
+                    try:
+                        pygame.mixer.music.stop()
+                    except Exception:
+                        pass
+                    bgm_suspended = True
+                    current_bgm = None
+
+                    dmg = int(getattr(constants, "SHUNGOKUSATSU_DAMAGE", 450))
+                    shungoku_pending_damage = int(dmg)
+                    shungoku_pending_apply = True
+                    shungoku_pending_ko = (int(getattr(dfd, "hp", 0)) - int(dmg)) <= 0
+
+                    behind = -int(dir_x)
+                    atk.pos_x = float(dfd.pos_x + (behind * 48))
+                    atk.rect.midbottom = (int(atk.pos_x), int(atk.pos_y))
+                    break
 
         for pr in projectiles:
             if pr.finished:
@@ -2624,6 +3134,14 @@ def main() -> None:
                     is_guarding = True
 
                 if is_guarding:
+                    was_in_blockstun = bool(getattr(target, "in_blockstun", False))
+                    info = attacker.get_last_move_frame_info()
+                    attacker_recovery = int(getattr(info, "recovery_frames", 0)) if info is not None else 0
+                    defender_stun = int(getattr(constants, "BLOCKSTUN_DEFAULT_FRAMES", 12))
+                    frame_meter_adv_value = int(defender_stun) - int(attacker_recovery)
+                    frame_meter_adv_frames_left = int(constants.FPS * 3)
+                    frame_meter_adv_attacker_side = 1 if attacker is p1 else 2
+
                     damage = int(getattr(pr, "damage", 0))
 
                     chip_ratio = float(getattr(constants, "GUARD_CHIP_DAMAGE_RATIO", 0.0))
@@ -2642,6 +3160,26 @@ def main() -> None:
                     target.apply_knockback(dir_x=dir_x, amount_px=guard_knockback)
                     crouch_guard = bool(getattr(target, "crouching", False))
                     target.enter_blockstun(crouching=crouch_guard)
+
+                    if (not was_in_blockstun) and guard_se is not None:
+                        guard_se.play()
+
+                    if (not was_in_blockstun) and (guard_fx_img is not None):
+                        try:
+                            effects.append(
+                                StaticImageBurstEffect(
+                                    image=guard_fx_img,
+                                    pos=pr.get_rect().center,
+                                    total_frames=random.randint(3, 5),
+                                    start_scale=1.2,
+                                    end_scale=0.8,
+                                    fadeout_frames=2,
+                                    angle_deg=float(random.uniform(0.0, 360.0)),
+                                    flip_x=bool(random.random() < 0.5),
+                                )
+                            )
+                        except Exception:
+                            pass
 
                     extra_hitstop = int(getattr(constants, "HIT_EFFECT_EXTRA_HITSTOP_FRAMES", 4))
                     hitstop_total = int(getattr(constants, "HITSTOP_DEFAULT_FRAMES", 6)) + max(0, extra_hitstop)
@@ -2668,6 +3206,14 @@ def main() -> None:
                         target.take_damage(pr.damage)
                         if hit_se is not None:
                             hit_se.play()
+
+                        info = attacker.get_last_move_frame_info()
+                        attacker_recovery = int(getattr(info, "recovery_frames", 0)) if info is not None else 0
+                        defender_stun = int(getattr(pr, "hitstun_frames", 0))
+                        frame_meter_adv_value = int(defender_stun) - int(attacker_recovery)
+                        frame_meter_adv_frames_left = int(constants.FPS * 3)
+                        frame_meter_adv_attacker_side = 1 if attacker is p1 else 2
+
                         attacker.add_combo_damage(int(getattr(pr, "damage", 0)))
                         target.set_combo_victim_state(attacker_side=attacker_side, hitstun_frames=pr.hitstun_frames)
                         target.enter_hitstun(frames=pr.hitstun_frames)
@@ -2688,34 +3234,139 @@ def main() -> None:
                     target.take_damage(pr.damage)
                     if hit_se is not None:
                         hit_se.play()
+
+                    if hit_fx_img is not None:
+                        try:
+                            effects.append(
+                                StaticImageBurstEffect(
+                                    image=hit_fx_img,
+                                    pos=pr.get_rect().center,
+                                    total_frames=random.randint(3, 5),
+                                    start_scale=1.2,
+                                    end_scale=0.8,
+                                    fadeout_frames=2,
+                                    angle_deg=float(random.uniform(0.0, 360.0)),
+                                    flip_x=bool(random.random() < 0.5),
+                                )
+                            )
+                        except Exception:
+                            pass
                     attacker.add_combo_damage(int(getattr(pr, "damage", 0)))
                     target.set_combo_victim_state(attacker_side=attacker_side, hitstun_frames=pr.hitstun_frames)
                     target.enter_hitstun(frames=pr.hitstun_frames)
 
         # 描画（ステージに描いて、最後にウィンドウへ拡大）。
-        stage_surface.fill(constants.COLOR_BG)
+        if shungoku_cine_frames_left > 0:
+            shungoku_cine_frames_left = max(0, int(shungoku_cine_frames_left) - 1)
+            if shungoku_hit_se_cooldown > 0:
+                shungoku_hit_se_cooldown -= 1
+            if shungoku_hit_se_cooldown <= 0:
+                if hit_se is not None:
+                    hit_se.play()
+                shungoku_hit_se_cooldown = max(1, int(constants.FPS // 10))
+                if hit_fx_img is not None:
+                    try:
+                        # 瞬獄殺中のヒット演出：画面全体へ加算エフェクトをばら撒く。
+                        for _i in range(random.randint(6, 10)):
+                            hx = int(random.randint(0, max(0, int(constants.STAGE_WIDTH) - 1)))
+                            hy = int(random.randint(0, max(0, int(constants.STAGE_HEIGHT) - 1)))
+                            effects.append(
+                                StaticImageBurstEffect(
+                                    image=hit_fx_img,
+                                    pos=(hx, hy),
+                                    total_frames=random.randint(3, 5),
+                                    start_scale=1.2,
+                                    end_scale=0.8,
+                                    fadeout_frames=2,
+                                    angle_deg=float(random.uniform(0.0, 360.0)),
+                                    flip_x=bool(random.random() < 0.5),
+                                )
+                            )
+                    except Exception:
+                        pass
 
-        _draw_stage_background(
-            stage_surface,
-            tick_ms=int(tick_ms),
-            stage_bg_frames=stage_bg_frames,
-            stage_bg_img=stage_bg_img,
-        )
+            stage_surface.fill((0, 0, 0))
+            # 白い箱のフラッシュ演出は廃止（hit.png の加算エフェクトへ置き換え）。
+            shungoku_flash_frames_left = 0
 
-        _draw_rain(stage_surface, drops=rain_drops)
+            if shungoku_cine_frames_left <= 0 and bool(shungoku_pending_apply):
+                atk = p1 if int(shungoku_attacker_side) == 1 else p2
+                dfd = p2 if int(shungoku_defender_side) == 2 else p1
+                dfd.take_damage(int(shungoku_pending_damage))
+                dfd.enter_knockdown()
+                if bool(shungoku_pending_ko):
+                    if shungoku_ko_se is not None:
+                        shungoku_ko_se.play()
+                    if shungoku_stage_bg_img is not None:
+                        stage_bg_override_img = shungoku_stage_bg_img
+                        shungoku_ko_anim_side = int(shungoku_attacker_side)
+                        shungoku_ko_anim_idx = 1
+                        shungoku_ko_anim_tick = 0
+                else:
+                    shungoku_posthit_lock_side = int(shungoku_attacker_side)
+                    shungoku_posthit_lock_defender_side = int(shungoku_defender_side)
+                shungoku_pending_damage = 0
+                shungoku_pending_apply = False
+                shungoku_pending_ko = False
 
-        # 地面ライン（目印）。
-        pygame.draw.line(
-            stage_surface,
-            (80, 80, 80),
-            (0, constants.GROUND_Y),
-            (constants.STAGE_WIDTH, constants.GROUND_Y),
-            2,
-        )
+            if shungoku_cine_frames_left <= 0:
+                shungoku_finish_frames_left = max(0, int(shungoku_finish_frames_left))
+        else:
+            stage_surface.fill(constants.COLOR_BG)
+
+            _draw_stage_background(
+                stage_surface,
+                tick_ms=int(tick_ms),
+                stage_bg_frames=stage_bg_frames,
+                stage_bg_img=(stage_bg_override_img or stage_bg_img),
+            )
+
+            _draw_rain(stage_surface, drops=rain_drops)
+
+            # 地面ライン（目印）。
+            pygame.draw.line(
+                stage_surface,
+                (80, 80, 80),
+                (0, constants.GROUND_Y),
+                (constants.STAGE_WIDTH, constants.GROUND_Y),
+                2,
+            )
 
         # キャラクター描画（内部でデバッグ枠線も描画）。
-        p1.draw(stage_surface, debug_draw=debug_draw)
-        p2.draw(stage_surface, debug_draw=debug_draw)
+        if shungoku_cine_frames_left <= 0:
+            shungoku_bg_active = (stage_bg_override_img is not None) and (stage_bg_override_img is shungoku_stage_bg_img)
+            if shungoku_bg_active and int(shungoku_ko_anim_side) in {1, 2}:
+                shungoku_ko_anim_tick += 1
+                if int(shungoku_ko_anim_tick) >= int(shungoku_ko_anim_frames_per_image):
+                    shungoku_ko_anim_tick = 0
+                    if int(shungoku_ko_anim_idx) < 16:
+                        shungoku_ko_anim_idx += 1
+                    else:
+                        shungoku_ko_anim_idx = 10
+
+            def _draw_shungoku_ko_anim(pl: Player) -> bool:
+                if not (shungoku_bg_active and int(shungoku_ko_anim_side) in {1, 2}):
+                    return False
+                if (int(shungoku_ko_anim_side) == 1 and pl is not p1) or (int(shungoku_ko_anim_side) == 2 and pl is not p2):
+                    return False
+                idx = max(1, min(16, int(shungoku_ko_anim_idx)))
+                key = (5400, int(idx))
+                img = getattr(pl, "_sprites", {}).get(key)
+                if img is None:
+                    return False
+                x = int(pl.rect.centerx) - (img.get_width() // 2)
+                y = int(pl.rect.bottom) - img.get_height()
+                if int(getattr(pl, "facing", 1)) < 0:
+                    img = pygame.transform.flip(img, True, False)
+                stage_surface.blit(img, (x, y))
+                return True
+
+            drew_p1 = _draw_shungoku_ko_anim(p1)
+            drew_p2 = _draw_shungoku_ko_anim(p2)
+            if not drew_p1:
+                p1.draw(stage_surface, debug_draw=debug_draw)
+            if not drew_p2:
+                p2.draw(stage_surface, debug_draw=debug_draw)
 
         # エフェクト描画（キャラより手前）。
         for e in effects:
@@ -2723,6 +3374,218 @@ def main() -> None:
 
         for pr in projectiles:
             pr.draw(stage_surface)
+
+        if game_state == GameState.TRAINING:
+            if bool(training_auto_recover_hp):
+                p1_target = int(round(p1.max_hp * (float(training_hp_percent_p1) / 100.0)))
+                p2_target = int(round(p2.max_hp * (float(training_hp_percent_p2) / 100.0)))
+                if int(getattr(p1, "hp", 0)) < int(p1_target):
+                    p1.hp = int(p1_target)
+                if int(getattr(p2, "hp", 0)) < int(p2_target):
+                    p2.hp = int(p2_target)
+            if bool(training_auto_recover_sp):
+                max_sp = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
+                p1_target_sp = int(round(max_sp * (float(training_sp_percent_p1) / 100.0)))
+                p2_target_sp = int(round(max_sp * (float(training_sp_percent_p2) / 100.0)))
+                if int(getattr(p1, "power_gauge", 0)) < int(p1_target_sp):
+                    p1.power_gauge = int(p1_target_sp)
+                if int(getattr(p2, "power_gauge", 0)) < int(p2_target_sp):
+                    p2.power_gauge = int(p2_target_sp)
+
+        if game_state == GameState.TRAINING and bool(frame_meter_enabled):
+            def _classify(pl: Player, *, synth_fc: int) -> FrameState:
+                if shungoku_cine_frames_left > 0 and (
+                    (shungoku_attacker_side == 1 and pl is p1)
+                    or (shungoku_attacker_side == 2 and pl is p2)
+                ):
+                    return FrameState.SPECIAL
+                if int(getattr(pl, "hitstun_frames_left", 0)) > 0 or int(getattr(pl, "blockstun_frames_left", 0)) > 0:
+                    return FrameState.STUN
+                if bool(getattr(pl, "in_hitstun", False)) or bool(getattr(pl, "in_blockstun", False)):
+                    return FrameState.STUN
+
+                info = pl.get_last_move_frame_info()
+                oneshot_playing = (
+                    (pl.get_current_action_id() is not None)
+                    and (str(getattr(pl, "_action_mode", "")) == "oneshot")
+                    and (not bool(getattr(pl, "_action_finished", False)))
+                )
+                is_rushing = bool(getattr(pl, "is_rushing", lambda: False)())
+                is_attack_like = bool(getattr(pl, "attacking", False)) or bool(oneshot_playing) or bool(is_rushing)
+                if is_attack_like and (info is not None):
+                    f0 = max(0, int(synth_fc) - 1)
+                    if f0 < int(getattr(info, "startup_frames", 0)):
+                        return FrameState.STARTUP
+                    if f0 < (int(getattr(info, "startup_frames", 0)) + int(getattr(info, "active_frames", 0))):
+                        return FrameState.ACTIVE
+                    if f0 < int(getattr(info, "total_frames", 0)):
+                        return FrameState.RECOVERY
+                return FrameState.IDLE
+
+            def _update_synth_counter(
+                *,
+                pl: Player,
+                last_action_id: int | None,
+                last_fc: int,
+                synth_fc: int,
+            ) -> tuple[int | None, int, int]:
+                now_aid = pl.get_current_action_id()
+                now_fc = int(pl.get_action_frame_counter())
+                hitstop = int(getattr(pl, "hitstop_frames_left", 0)) > 0
+                if now_aid is None:
+                    return None, int(now_fc), int(now_fc)
+                if last_action_id is None or int(now_aid) != int(last_action_id):
+                    return int(now_aid), int(now_fc), int(now_fc)
+                if hitstop and int(now_fc) == int(last_fc):
+                    return int(last_action_id), int(now_fc), int(synth_fc) + 1
+                return int(last_action_id), int(now_fc), int(now_fc)
+
+            frame_meter_last_action_id_p1, frame_meter_last_action_fc_p1, frame_meter_synth_action_fc_p1 = _update_synth_counter(
+                pl=p1,
+                last_action_id=frame_meter_last_action_id_p1,
+                last_fc=frame_meter_last_action_fc_p1,
+                synth_fc=frame_meter_synth_action_fc_p1,
+            )
+            frame_meter_last_action_id_p2, frame_meter_last_action_fc_p2, frame_meter_synth_action_fc_p2 = _update_synth_counter(
+                pl=p2,
+                last_action_id=frame_meter_last_action_id_p2,
+                last_fc=frame_meter_last_action_fc_p2,
+                synth_fc=frame_meter_synth_action_fc_p2,
+            )
+
+            s1 = _classify(p1, synth_fc=frame_meter_synth_action_fc_p1)
+            s2 = _classify(p2, synth_fc=frame_meter_synth_action_fc_p2)
+            hs1 = int(getattr(p1, "hitstop_frames_left", 0)) > 0
+            hs2 = int(getattr(p2, "hitstop_frames_left", 0)) > 0
+
+            p1_combo = bool(getattr(p1, "is_in_combo", False))
+            p2_combo = bool(getattr(p2, "is_in_combo", False))
+            combo_overlap_p1 = (s1 == FrameState.ACTIVE) and (s2 == FrameState.STUN) and p2_combo
+            combo_overlap_p2 = (s2 == FrameState.ACTIVE) and (s1 == FrameState.STUN) and p1_combo
+
+            any_non_idle = (s1 != FrameState.IDLE) or (s2 != FrameState.IDLE)
+            any_hitstop = bool(hs1 or hs2)
+            if any_non_idle:
+                frame_meter_paused = False
+                frame_meter_idle_run = 0
+            else:
+                frame_meter_idle_run = int(frame_meter_idle_run) + 1
+                if int(frame_meter_idle_run) >= 20:
+                    frame_meter_paused = True
+
+            if any_hitstop:
+                frame_meter_paused = False
+
+            if not frame_meter_paused:
+                frame_meter_p1.push(FrameSample(state=s1, hitstop=bool(hs1), combo=bool(combo_overlap_p1)))
+                frame_meter_p2.push(FrameSample(state=s2, hitstop=bool(hs2), combo=bool(combo_overlap_p2)))
+
+            frame_meter_adv_frames_left = max(0, int(frame_meter_adv_frames_left) - 1)
+            if frame_meter_adv_frames_left <= 0:
+                frame_meter_adv_value = None
+                frame_meter_adv_attacker_side = 0
+
+            block_w = 6
+            history = 120
+            bar_w = int(history * block_w)
+            bar_h = 10
+            gap = 6
+            panel_pad = 10
+            panel_w = int(bar_w + 90)
+            panel_h = int((bar_h * 2) + gap + (panel_pad * 2))
+            panel_x = int((constants.STAGE_WIDTH - panel_w) // 2)
+            panel_y = int(constants.STAGE_HEIGHT - panel_h - 8)
+
+            if "frame_meter_panel" not in locals():
+                frame_meter_panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                frame_meter_panel.fill((0, 0, 0, 150))
+
+            stage_surface.blit(frame_meter_panel, (panel_x, panel_y))
+            pygame.draw.rect(stage_surface, (110, 110, 110), pygame.Rect(panel_x, panel_y, panel_w, panel_h), 2)
+
+            colors = {
+                FrameState.IDLE: (110, 110, 110),
+                FrameState.STARTUP: (60, 220, 120),
+                FrameState.ACTIVE: (240, 70, 70),
+                FrameState.RECOVERY: (90, 140, 255),
+                FrameState.STUN: (240, 210, 70),
+                FrameState.SPECIAL: (170, 90, 255),
+            }
+
+            def _brighten(rgb: tuple[int, int, int], *, amount: int) -> tuple[int, int, int]:
+                r, g, b = rgb
+                return (min(255, int(r) + int(amount)), min(255, int(g) + int(amount)), min(255, int(b) + int(amount)))
+
+            def _draw_bar(items: list[FrameSample], *, row_y: int) -> None:
+                seg = items[-history:] if len(items) > history else items
+                start_x = panel_x + panel_pad + (bar_w - (len(seg) * block_w))
+                x = int(start_x)
+                for smp in seg:
+                    st = smp.state
+                    base = colors.get(st, (110, 110, 110))
+                    col = _brighten(base, amount=35) if bool(smp.hitstop) else base
+                    r = pygame.Rect(x, row_y, block_w - 1, bar_h)
+                    pygame.draw.rect(stage_surface, col, r)
+                    if bool(smp.hitstop):
+                        pygame.draw.rect(stage_surface, (245, 245, 245), r, 1)
+                    if bool(smp.combo):
+                        pygame.draw.rect(stage_surface, (255, 120, 255), r, 2)
+                    x += int(block_w)
+
+            row1_y = int(panel_y + panel_pad)
+            row2_y = int(panel_y + panel_pad + bar_h + gap)
+            _draw_bar(frame_meter_p1.items(), row_y=row1_y)
+            _draw_bar(frame_meter_p2.items(), row_y=row2_y)
+
+            bar_left = int(panel_x + panel_pad)
+            bar_right = int(bar_left + bar_w)
+            grid_top = int(row1_y)
+            grid_bottom = int(row2_y + bar_h)
+            for i in range(0, history + 1):
+                if i % 5 != 0:
+                    continue
+                gx = int(bar_right - (i * block_w))
+                if gx < bar_left or gx > bar_right:
+                    continue
+                if i % 10 == 0:
+                    gc = (140, 140, 140)
+                    gw = 2
+                else:
+                    gc = (120, 120, 120)
+                    gw = 1
+                pygame.draw.line(stage_surface, gc, (gx, grid_top), (gx, grid_bottom), gw)
+
+            pygame.draw.line(stage_surface, (235, 235, 235), (bar_right, grid_top - 2), (bar_right, grid_bottom + 2), 2)
+
+            combo_now = bool(combo_overlap_p1 or combo_overlap_p2)
+            if combo_now:
+                combo_surf = debug_font.render("Combo!", True, (255, 170, 255))
+                combo_x = int(bar_right - combo_surf.get_width() - 6)
+                combo_y = int(panel_y - combo_surf.get_height() - 2)
+                stage_surface.blit(combo_surf, (combo_x, combo_y))
+
+            tag1 = debug_font.render("P1", True, (240, 240, 240))
+            tag2 = debug_font.render("P2", True, (240, 240, 240))
+            stage_surface.blit(tag1, (panel_x + 6, row1_y - 2))
+            stage_surface.blit(tag2, (panel_x + 6, row2_y - 2))
+
+            if frame_meter_adv_value is not None and frame_meter_adv_attacker_side in {1, 2}:
+                adv = int(frame_meter_adv_value)
+                sign = "+" if adv >= 0 else ""
+                txt = f"{sign}{adv}"
+                ratio = 0.0
+                if int(constants.FPS) > 0:
+                    ratio = float(frame_meter_adv_frames_left) / float(constants.FPS * 3)
+                a = int(max(0, min(255, round(255 * ratio))))
+                if adv >= 0:
+                    c = (90, 255, 220)
+                else:
+                    c = (255, 90, 90)
+                adv_surf = frame_meter_adv_font.render(txt, True, c)
+                adv_surf.set_alpha(a)
+                adv_x = int((panel_x + panel_pad + bar_w) - (adv_surf.get_width() // 2))
+                adv_y = int(panel_y - adv_surf.get_height() - 6)
+                stage_surface.blit(adv_surf, (adv_x, adv_y))
 
         if game_state == GameState.TRAINING:
             hud_top = 120
@@ -2968,7 +3831,18 @@ def main() -> None:
             stage_surface.blit(dmg_surf, dmg_rect)
 
         scaled = pygame.transform.smoothscale(stage_surface, (constants.SCREEN_WIDTH, constants.SCREEN_HEIGHT))
-        screen.blit(scaled, (0, 0))
+
+        pan_x = 0
+        if int(shungoku_pan_frames_left) > 0:
+            shungoku_pan_frames_left = max(0, int(shungoku_pan_frames_left) - 1)
+            t = float(int(shungoku_pan_total_frames) - int(shungoku_pan_frames_left)) / float(max(1, int(shungoku_pan_total_frames)))
+            if t < 0.5:
+                ease = t / 0.5
+            else:
+                ease = (1.0 - t) / 0.5
+            ease = max(0.0, min(1.0, float(ease)))
+            pan_x = int(round(-float(shungoku_pan_target_px) * float(ease)))
+        screen.blit(scaled, (int(pan_x), 0))
 
         pygame.display.flip()
 
