@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.characters.definition import CharacterDefinition, SpecialSpec
+from src.characters.frame_data import RYUKO_FRAME_DATA
 from src.utils import constants
 
 
@@ -8,8 +9,8 @@ RYUKO = CharacterDefinition(
     name="RYUKO",
     attack_action_map={
         "P1_U_LP": 400,
-        "P1_I_MP": 200,
-        "P1_O_HP": 210,
+        "P1_I_MP": 209,  # Iキー中パンチ: action 209（元々Oキーだったもの）
+        "P1_O_HP": 1000,  # Oキー大パンチ: action 1000（元々Iキーだったもの）
         "P1_J_LK": 229,
         "P1_K_MK": 430,
         "P1_L_HK": 410,
@@ -57,4 +58,5 @@ RYUKO = CharacterDefinition(
             requires_power=False,
         ),
     ],
+    frame_data=RYUKO_FRAME_DATA,
 )

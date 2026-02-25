@@ -71,6 +71,14 @@ class Player:
         # 向き（右:+1 / 左:-1）。main 側で「相手の位置」を見て更新する。
         self.facing: int = 1
 
+        # ダッシュ（前/後ダブルタップ）
+        self._dash_frames_left: int = 0
+        self._dash_dir: int = 0
+        self._dash_speed: float = 0.0
+        self._dash_last_tap_dir: int = 0
+        self._dash_last_tap_frame: int = -9999
+        self._dash_prev_move_x: int = 0
+
         # 攻撃は「一定フレームだけ攻撃状態」にする簡易タイマー。
         self._attack_frames_left: int = 0
         # 将来のダメージ判定用（多段ヒット防止）。Phase 1 ではまだ未使用。
@@ -84,6 +92,9 @@ class Player:
 
         # 現在の攻撃ID（ATTACK_SPECS のキー）。攻撃していない時は None。
         self._attack_id: str | None = None
+        
+        # 攻撃開始からの経過フレーム数（frame_data.py のタイミング制御用）
+        self._attack_elapsed_frames: int = 0
 
         # デバッグ用：最後に入力された攻撃のフレーム情報（全体/発生/硬直）。
         self._last_move_frame_info: MoveFrameInfo | None = None
@@ -136,6 +147,9 @@ class Player:
 
         self._shungoku_active: bool = False
         self._shungoku_dash_frames_left: int = 0
+
+        # ヒットキャンセル受付ウィンドウ（攻撃ヒット時に設定）
+        self._hit_cancel_window_frames_left: int = 0
         self._shungoku_startup_frames_left: int = 0
         self._shungoku_dash_dir: int = 1
         self._shungoku_anim_tick: int = 0
@@ -195,7 +209,7 @@ class Player:
         self._down_anim_index: int = 0
         self._down_anim_dir: int = 1
         self._down_anim_tick: int = 0
-        self._down_anim_frames_per_image: int = 8
+        self._down_anim_frames_per_image: int = 5  # ダウンアニメーション速度を高速化
 
     @property
     def attacking(self) -> bool:
@@ -246,8 +260,7 @@ class Player:
 
     def enter_knockdown(self) -> None:
         # ダウンモーションへ。
-        # - HP==0 の場合は KO（復帰なし）
-        # - HP>0 の場合はダウン（起き上がって Idle へ戻る）
+        # 通常は起き上がるダウン（HP=0でもトレーニングモードでは起き上がる）
         self.hitstop_frames_left = 0
         self.hitstun_frames_left = 0
         self.hitstun_timer = 0
@@ -264,20 +277,7 @@ class Player:
         self.on_ground = True
         self.crouching = False
 
-        is_ko = int(getattr(self, "hp", 0)) <= 0
-
-        # KO: 専用の停止ダウン（復帰なし）。
-        if is_ko:
-            self._knocked_down = True
-            self._ko_down_anim_active = True
-            self._ko_down_anim_index = 0
-            self._ko_down_anim_tick = 0
-            self._down_anim_active = False
-            action_id = self._best_action_id([5041, 5040, 5042, 5043, 5044, 5000])
-            self._set_action(int(action_id), mode="oneshot")
-            return
-
-        # Non-KO: 起き上がりまで再生するダウン。
+        # 起き上がりまで再生するダウン（瞬獄殺と同じアニメーション）
         self._knocked_down = False
         self._ko_down_anim_active = False
         self._down_anim_active = True
@@ -381,7 +381,8 @@ class Player:
 
     def start_attack(self, attack_id: str) -> None:
         # すでに攻撃中なら再発動しない（連打で伸びないようにする）。
-        if self.attacking:
+        # ただし、ヒットキャンセルウィンドウ中は例外的に許可する。
+        if self.attacking and self._hit_cancel_window_frames_left <= 0:
             return
 
         # のけぞり中は攻撃できない。
@@ -394,6 +395,7 @@ class Player:
         self._registered_hit_ids.clear()
         self._last_clsn1_signature = None
         self._current_hit_id = 0
+        self._attack_elapsed_frames = 0
 
         info = self._infer_move_frame_info(attack_id)
         if info is None:
@@ -468,6 +470,19 @@ class Player:
 
         if self.in_blockstun:
             self.vel_x = 0.0
+            return
+
+        # ダッシュ中は移動入力より優先して高速移動させる。
+        if int(getattr(self, "_dash_frames_left", 0)) > 0:
+            self._dash_frames_left = int(self._dash_frames_left) - 1
+            self.vel_x = float(self._dash_dir) * float(getattr(self, "_dash_speed", 0.0))
+            if int(self._dash_frames_left) <= 0:
+                self._dash_frames_left = 0
+                self._dash_dir = 0
+                self._dash_speed = 0.0
+            # ダッシュ中はしゃがみ/ガード意図を消しておく
+            self.crouching = False
+            self.holding_back = False
             return
 
         # 攻撃中（全体フレーム中）は移動できない。
@@ -554,6 +569,9 @@ class Player:
             if spec_key == "RUSH":
                 return (not self.is_rushing()) and int(self._rush_recovery_frames_left) <= 0
             if spec_key == "SHUNGOKUSATSU":
+                # ヒットキャンセルウィンドウ中は瞬獄殺を発動させない（確定で入らないようにする）
+                if self._hit_cancel_window_frames_left > 0:
+                    return False
                 mx = int(getattr(constants, "POWER_GAUGE_MAX", 1000))
                 if int(self.power_gauge) < mx:
                     return False
@@ -999,6 +1017,16 @@ class Player:
 
     def is_rush_attack_active(self) -> bool:
         return int(self._rush_frames_left) > 0
+    
+    def is_rush_early_hit(self) -> bool:
+        """突進攻撃が根元（発動直後）でヒットしたかを判定。根元ヒット時のみダウンさせる。"""
+        if not self.is_rush_attack_active():
+            return False
+        # 突進の残りフレーム数が多い = 発動直後 = 根元ヒット
+        total_frames = int(getattr(constants, "RUSH_FRAMES", 18))
+        # 最初の3分の2以上残っている場合を「根元ヒット」とする
+        threshold = int(total_frames * 0.66)
+        return int(self._rush_frames_left) >= threshold
 
     def _get_rush_hitbox(self) -> pygame.Rect:
         # 突進中は、表示している 6520-2 のスプライトに合わせて当たり判定を作る。
@@ -1098,6 +1126,9 @@ class Player:
 
     def _can_start_buffered_attack_now(self) -> bool:
         if self.attacking:
+            # ヒットキャンセル受付中は、攻撃中でも次の技を出せる。
+            if int(getattr(self, "_hit_cancel_window_frames_left", 0)) > 0:
+                return True
             return False
         if self.in_hitstun or self.in_blockstun:
             return False
@@ -1214,6 +1245,17 @@ class Player:
         if not frames:
             return
 
+        # frame_data.py からアニメーション速度を取得
+        animation_speed = 1.0
+        if self._attack_id:
+            frame_data_dict = getattr(self.character, "frame_data", None)
+            if frame_data_dict:
+                frame_data = frame_data_dict.get(str(self._attack_id))
+                if frame_data:
+                    animation_speed = float(getattr(frame_data, "animation_speed", 1.0))
+                    # 速度は0.1〜10.0の範囲に制限（異常値を防ぐ）
+                    animation_speed = max(0.1, min(10.0, animation_speed))
+
         frame = frames[self._frame_index]
         t = int(frame.get("time", 0))
         if int(self._current_action_id or 0) in {5000, 5040, 5041, 5042, 5043, 5044}:
@@ -1226,7 +1268,9 @@ class Player:
             return
 
         if self._frame_time_left <= 0:
-            self._frame_time_left = max(1, t)
+            # アニメーション速度を適用（速度が速いほどフレーム時間は短くなる）
+            adjusted_time = max(1, int(t / animation_speed))
+            self._frame_time_left = adjusted_time
 
         self._frame_time_left -= 1
         if self._frame_time_left > 0:
@@ -1248,7 +1292,9 @@ class Player:
         next_t = int(frames[self._frame_index].get("time", 0))
         if int(self._current_action_id or 0) in {5000, 5040, 5041, 5042, 5043, 5044}:
             next_t = 10
-        self._frame_time_left = max(1, int(next_t))
+        # アニメーション速度を適用
+        adjusted_next_time = max(1, int(next_t / animation_speed))
+        self._frame_time_left = adjusted_next_time
 
     def update(self) -> None:
         # ヒットストップ中は「動作もタイマーも止める」。
@@ -1286,6 +1332,11 @@ class Player:
             self.knockback_vx = 0.0
             self.on_ground = True
             self.crouching = False
+            # ダウン中も画面端制限を適用
+            half_w = self.rect.width / 2.0
+            min_x = half_w
+            max_x = constants.STAGE_WIDTH - half_w
+            self.pos_x = max(min_x, min(max_x, self.pos_x))
             self.rect.midbottom = (int(self.pos_x), int(self.pos_y))
             return
 
@@ -1301,6 +1352,9 @@ class Player:
 
         if self.combo_display_frames_left > 0:
             self.combo_display_frames_left -= 1
+
+        if self._hit_cancel_window_frames_left > 0:
+            self._hit_cancel_window_frames_left -= 1
 
         self._action_frame_counter += 1
 
@@ -1403,11 +1457,13 @@ class Player:
         # 攻撃タイマーを進める。
         if self._attack_frames_left > 0:
             self._attack_frames_left -= 1
+            self._attack_elapsed_frames += 1
             if self._attack_frames_left == 0:
                 self._attack_id = None
                 self._registered_hit_ids.clear()
                 self._last_clsn1_signature = None
                 self._current_hit_id = 0
+                self._attack_elapsed_frames = 0
 
         # 空中にいる間だけ重力を加える。
         if not self.on_ground:
@@ -1493,6 +1549,28 @@ class Player:
             return None
 
     def _infer_move_frame_info(self, attack_id: str) -> MoveFrameInfo | None:
+        # まず frame_data.py で定義されたフレームデータを優先的に使用
+        frame_data_dict = getattr(self.character, "frame_data", None)
+        if frame_data_dict and attack_id:
+            frame_data = frame_data_dict.get(str(attack_id))
+            if frame_data:
+                # frame_data.py のデータを使用
+                startup = int(getattr(frame_data, "startup_frames", 0))
+                active = int(getattr(frame_data, "active_frames", 0))
+                recovery = int(getattr(frame_data, "recovery_frames", 0))
+                bonus = int(getattr(frame_data, "recovery_bonus_frames", 0))
+                
+                total = startup + active + recovery + bonus
+                
+                return MoveFrameInfo(
+                    attack_id=str(attack_id),
+                    total_frames=total,
+                    startup_frames=startup,
+                    active_frames=active,
+                    recovery_frames=recovery + bonus,
+                )
+        
+        # frame_data.py にデータがない場合は、従来通りAIRアニメーションから計算
         action_id = self._attack_to_action_id(attack_id)
         if action_id is None:
             return None
@@ -1656,19 +1734,32 @@ class Player:
             out.append(rect)
         return out
 
-    @staticmethod
-    def _fallback_attack_hitbox(base: pygame.Rect, *, facing: int, crouching: bool, attack_id: str | None) -> pygame.Rect:
-        spec = constants.ATTACK_SPECS.get(attack_id or "")
-        if spec is None:
-            hitbox_w = constants.HITBOX_WIDTH
-            hitbox_h = constants.HITBOX_HEIGHT
-            offset_x = constants.HITBOX_OFFSET_X
-            offset_y = constants.HITBOX_OFFSET_Y
+    def _fallback_attack_hitbox(self, base: pygame.Rect, *, facing: int, crouching: bool, attack_id: str | None) -> pygame.Rect:
+        # まず frame_data.py からhitboxパラメータを取得（優先）
+        frame_data_dict = getattr(self.character, "frame_data", None)
+        frame_data = None
+        if frame_data_dict and attack_id:
+            frame_data = frame_data_dict.get(str(attack_id))
+        
+        if frame_data:
+            # frame_data.py のデータを使用
+            hitbox_w = int(getattr(frame_data, "hitbox_width", constants.HITBOX_WIDTH))
+            hitbox_h = int(getattr(frame_data, "hitbox_height", constants.HITBOX_HEIGHT))
+            offset_x = int(getattr(frame_data, "hitbox_offset_x", constants.HITBOX_OFFSET_X))
+            offset_y = int(getattr(frame_data, "hitbox_offset_y", constants.HITBOX_OFFSET_Y))
         else:
-            hitbox_w = int(spec["hitbox_width"])
-            hitbox_h = int(spec["hitbox_height"])
-            offset_x = int(spec["hitbox_offset_x"])
-            offset_y = int(spec["hitbox_offset_y"])
+            # frame_data.py にない場合は constants.ATTACK_SPECS を使用（フォールバック）
+            spec = constants.ATTACK_SPECS.get(attack_id or "")
+            if spec is None:
+                hitbox_w = constants.HITBOX_WIDTH
+                hitbox_h = constants.HITBOX_HEIGHT
+                offset_x = constants.HITBOX_OFFSET_X
+                offset_y = constants.HITBOX_OFFSET_Y
+            else:
+                hitbox_w = int(spec["hitbox_width"])
+                hitbox_h = int(spec["hitbox_height"])
+                offset_x = int(spec["hitbox_offset_x"])
+                offset_y = int(spec["hitbox_offset_y"])
 
         if crouching:
             y = base.top + offset_y + 20
@@ -1717,13 +1808,73 @@ class Player:
             return None
         return self._union_rects(hitboxes)
 
+    def get_input_visual_indicator(self) -> pygame.Rect | None:
+        """入力視覚インジケーター用のヒットボックスを返す（実際の判定とは別）"""
+        if not self.attacking:
+            return None
+        
+        attack_id = self._attack_id
+        frame_data_dict = getattr(self.character, "frame_data", None)
+        if not frame_data_dict or not attack_id:
+            return None
+        
+        frame_data = frame_data_dict.get(str(attack_id))
+        if not frame_data:
+            return None
+        
+        # input_visual_frame で指定されたフレームでのみ表示
+        input_visual_frame = int(getattr(frame_data, "input_visual_frame", 0))
+        elapsed = int(self._attack_elapsed_frames)
+        
+        # 指定されたフレームでのみ視覚インジケーターを表示
+        if elapsed != input_visual_frame:
+            return None
+        
+        # ヒットボックスと同じ形状・位置で表示
+        return self._fallback_attack_hitbox(
+            self.rect,
+            facing=self.facing,
+            crouching=self.crouching,
+            attack_id=self._attack_id,
+        )
+
     def get_hitboxes(self) -> list[pygame.Rect]:
         # 攻撃判定は「攻撃中」かつ「そのフレームのclsn1がある時のみ」有効。
         if self.is_rush_attack_active():
             return [self._get_rush_hitbox()]
         if not self.attacking:
             return []
-
+        
+        # frame_data.py のタイミング制御を優先
+        attack_id = self._attack_id
+        frame_data_dict = getattr(self.character, "frame_data", None)
+        frame_data = None
+        if frame_data_dict and attack_id:
+            frame_data = frame_data_dict.get(str(attack_id))
+        
+        if frame_data:
+            # frame_data.py のstartup_framesとactive_framesに基づいて判定
+            startup = int(getattr(frame_data, "startup_frames", 0))
+            active = int(getattr(frame_data, "active_frames", 0))
+            elapsed = int(self._attack_elapsed_frames)
+            
+            # 発生前（startup中）または持続終了後は攻撃判定なし
+            if elapsed < startup or elapsed >= (startup + active):
+                return []
+            
+            # 持続中は攻撃判定あり
+            # frame_data.py を使用する場合は、AIRのclsn1を無視してフォールバックのみ使用
+            # これにより、frame_data.py で定義したタイミングと形状が正確に適用される
+            return [
+                self._fallback_attack_hitbox(
+                    self.rect,
+                    facing=self.facing,
+                    crouching=self.crouching,
+                    attack_id=self._attack_id,
+                )
+            ]
+        
+        # frame_data.py にない場合は従来通りAIRのclsn1に依存
         air_boxes = self._get_air_clsn_boxes("clsn1")
         if air_boxes:
             return air_boxes
@@ -2015,6 +2166,11 @@ class Player:
             pygame.draw.rect(surface, constants.COLOR_HURTBOX, hurtbox, 2)
         pygame.draw.rect(surface, constants.COLOR_PUSHBOX, self.get_pushbox(), 2)
 
+        # 入力視覚インジケーター（実際のヒット判定とは別、黄色/オレンジで表示）
+        input_indicator = self.get_input_visual_indicator()
+        if input_indicator is not None:
+            pygame.draw.rect(surface, (255, 200, 0), input_indicator, 3)  # オレンジ色、太線
+        
         # Hitbox（AIR clsn1）はフレームに存在する時だけ描画。
         for hitbox in self.get_hitboxes():
             pygame.draw.rect(surface, constants.COLOR_HITBOX, hitbox, 2)

@@ -24,6 +24,20 @@ INPUT_BUFFER_FRAMES: int = 25
 # Command leniency
 COMMAND_BUTTON_EARLY_FRAMES: int = 2
 
+# Hit cancel window (frames after hit where you can cancel into another attack)
+HIT_CANCEL_WINDOW_FRAMES: int = 8
+
+# Dash (double-tap)
+DASH_DOUBLE_TAP_WINDOW_FRAMES: int = 12
+DASH_FRAMES: int = 14
+DASH_SPEED: float = 8.0
+
+# Step (double-tap) - dashの代わりに短距離の前ステップ/バックステップを行う
+STEP_FORWARD_FRAMES: int = 10
+STEP_BACK_FRAMES: int = 12
+STEP_FORWARD_SPEED: float = 7.0
+STEP_BACK_SPEED: float = 7.5
+
 # Physics（簡易物理）
 # y軸は下方向が + なので、ジャンプ初速は負の値になります。
 GRAVITY: float = 0.8
@@ -122,26 +136,26 @@ ATTACK_SPECS: dict[str, dict[str, int]] = {
         "hitstop_frames": 6,
     },
     "P1_I_MP": {
-        "damage": 40,
-        "duration_frames": 8,
-        "hitbox_width": 30,
-        "hitbox_height": 20,
-        "hitbox_offset_x": 22,
-        "hitbox_offset_y": 18,
-        "knockback_px": 8,
-        "hitstop_frames": 5,
-        "recovery_bonus_frames": 6,
-        "attacker_recoil_px": 4,
-    },
-    "P1_O_HP": {
         "damage": 65,
         "duration_frames": 12,
         "hitbox_width": 38,
         "hitbox_height": 22,
         "hitbox_offset_x": 26,
-        "hitbox_offset_y": 18,
+        "hitbox_offset_y": 12,  # 中パンチ: 当たり判定を上に挙げる（18→12）
         "knockback_px": 10,
         "hitstop_frames": 6,
+    },
+    "P1_O_HP": {
+        "damage": 40,
+        "duration_frames": 17,
+        "hitbox_width": 50,
+        "hitbox_height": 25,
+        "hitbox_offset_x": 25,
+        "hitbox_offset_y": 10,  # 大パンチ: 当たり判定を上に挙げる（15→10）
+        "knockback_px": 8,
+        "hitstop_frames": 5,
+        "recovery_bonus_frames": 6,
+        "attacker_recoil_px": 4,
     },
     "P1_J_LK": {
         "damage": 110,

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.characters.frame_data import AttackFrameData
 
 
 @dataclass(frozen=True)
@@ -50,3 +54,6 @@ class CharacterDefinition:
 
     # Special command table (character-specific)
     specials: list[SpecialSpec]
+    
+    # Frame data (attack_id -> AttackFrameData)
+    frame_data: dict[str, AttackFrameData] | None = None
