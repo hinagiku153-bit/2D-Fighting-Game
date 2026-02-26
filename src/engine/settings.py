@@ -44,12 +44,12 @@ DEFAULT_KEYBINDS: dict[str, int] = {
     "P1_RIGHT": int(pygame.K_d),
     "P1_DOWN": int(pygame.K_s),
     "P1_JUMP": int(pygame.K_w),
-    "P1_LP": int(pygame.K_u),
-    "P1_MP": int(pygame.K_i),
-    "P1_HP": int(pygame.K_o),
-    "P1_LK": int(pygame.K_j),
-    "P1_MK": int(pygame.K_k),
-    "P1_HK": int(pygame.K_l),
+    # Guilty Gear Strive button layout (5 buttons)
+    "P1_P": int(pygame.K_u),    # Punch
+    "P1_K": int(pygame.K_j),    # Kick
+    "P1_S": int(pygame.K_i),    # Slash
+    "P1_HS": int(pygame.K_k),   # Heavy Slash
+    "P1_D": int(pygame.K_o),    # Dust Attack
     "P2_LEFT": int(pygame.K_LEFT),
     "P2_RIGHT": int(pygame.K_RIGHT),
     "P2_DOWN": int(pygame.K_DOWN),

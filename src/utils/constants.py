@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+from enum import Enum
+
 # このファイルは、ゲーム内の数値設定を1か所に集約するための定数定義です。
 # Phase 1 では「60FPS固定」を前提に、速度や重力は “1フレームあたり” の値として扱います。
+
+# 攻撃属性の定義
+class AttackAttribute(Enum):
+    """
+    攻撃属性の定義。
+    
+    ガード判定時に、どのガード姿勢で防げるかを決定する。
+    """
+    MID = "mid"           # 立ち・しゃがみ両方でガード可能（通常攻撃）
+    OVERHEAD = "overhead" # 立ちガードでのみガード可能（中段攻撃）
+    LOW = "low"           # しゃがみガードでのみガード可能（下段攻撃）
 
 # Window（画面・ウィンドウ関連）
 # ステージ（論理解像度）は固定。ウィンドウ解像度を変えてもステージの広さは変えない。
@@ -20,6 +33,10 @@ FPS: int = 60
 # Input
 # コマンド（236236 など）検知用に、方向/ボタン履歴を保持するフレーム数。
 INPUT_BUFFER_FRAMES: int = 25
+
+# Attack input buffering (frames to hold attack button inputs during busy states)
+# 攻撃ボタンの先行入力猶予フレーム数（硬直中などに入力を保持）
+ATTACK_BUFFER_FRAMES: int = 8
 
 # Command leniency
 COMMAND_BUTTON_EARLY_FRAMES: int = 2
@@ -236,6 +253,13 @@ COMBO_DISPLAY_FRAMES: int = int(2.5 * FPS)
 HADOKEN_ACTION_ID: int = 6040
 HADOKEN_SPAWN_DELAY_FRAMES: int = 20
 HADOKEN_ACTION_LAST_FRAME_TIME: int = 40
+
+# 投げ技関連
+THROW_STARTUP_FRAMES: int = 2  # 発生2F
+THROW_RANGE_PX: int = 60  # 投げ間合い
+THROW_DAMAGE: int = 100  # 投げダメージ
+THROW_ACTION_ID: int = 800  # 投げアニメーション（前投げ）
+THROW_BACK_ACTION_ID: int = 801  # 後ろ投げアニメーション
 
 
 def get_damage_multiplier(combo_count: int) -> float:

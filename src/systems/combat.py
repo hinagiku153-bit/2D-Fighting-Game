@@ -8,6 +8,7 @@ import pygame
 from src.entities.effect import Effect, StaticImageBurstEffect
 from src.engine.context import GameState
 from src.utils import constants
+from src.utils.constants import AttackAttribute
 
 if TYPE_CHECKING:
     from src.entities.player import Player
@@ -107,10 +108,31 @@ class CombatSystem:
                 attacker_recoil_px = int(spec.get("attacker_recoil_px", getattr(constants, "ATTACKER_RECOIL_PX_DEFAULT", 3)))
                 hit_pause = int(spec.get("hit_pause", getattr(constants, "HITSTUN_DEFAULT_FRAMES", 20)))
 
+        # 攻撃属性を取得（デフォルトはMID）
+        attack_attribute = AttackAttribute.MID
+        if frame_data:
+            attack_attribute = getattr(frame_data, "attack_attribute", AttackAttribute.MID)
+        
         # ガード判定：後ろ入力中（defender.holding_back）ならガード成功。
-        is_guarding = bool(getattr(defender, "can_guard_now", lambda: False)()) and bool(
+        # ただし、攻撃属性とガード姿勢の組み合わせをチェック
+        can_guard_basic = bool(getattr(defender, "can_guard_now", lambda: False)()) and bool(
             getattr(defender, "is_guarding_intent", lambda: False)()
         )
+        
+        # 攻撃属性に応じたガード判定
+        is_guarding = False
+        if can_guard_basic:
+            if attack_attribute == AttackAttribute.OVERHEAD:
+                # 中段攻撃：立ちガードでのみガード可能
+                is_guarding = bool(getattr(defender, "is_standing_guard", lambda: False)())
+            elif attack_attribute == AttackAttribute.LOW:
+                # 下段攻撃：しゃがみガードでのみガード可能
+                is_guarding = bool(getattr(defender, "is_crouching_guard", lambda: False)())
+            else:  # AttackAttribute.MID
+                # 通常攻撃：立ち・しゃがみ両方でガード可能
+                is_guarding = True
+        
+        # トレーニングモードの全ガード設定（攻撃属性に関わらず全てガード）
         if game_state == GameState.TRAINING and training_p2_all_guard and (defender is p2):
             is_guarding = True
 
@@ -254,7 +276,8 @@ class CombatSystem:
         attacker_side: int,
     ) -> dict[str, Any]:
         """ダメージ処理を実行。"""
-        if int(getattr(defender, "hitstun_timer", 0)) > 0:
+        # コンボ判定：相手がコンボ中（is_in_combo）かつ、攻撃側が同じならコンボ継続
+        if bool(getattr(defender, "is_in_combo", False)) and int(getattr(defender, "_combo_attacker_side", 0)) == attacker_side:
             attacker.extend_combo_on_opponent()
         else:
             attacker.start_combo_on_opponent(opponent_side=(2 if attacker_side == 1 else 1))
@@ -294,13 +317,26 @@ class CombatSystem:
 
         attacker.add_combo_damage(scaled_damage)
 
-        # ヒットキャンセルウィンドウを設定（コマンド技のみ）
-        # 通常技からはキャンセル不可、コマンド技（波動拳、突進、真空波動拳）のみキャンセル可能
+        # ヒットキャンセルウィンドウを設定
+        # コマンド技（波動拳、突進、真空波動拳）とIキー（P1_S）がヒットキャンセル可能
         attack_id = getattr(attacker, "_attack_id", None)
         is_command_move = attack_id in {"HADOKEN", "RUSH", "SHINKU_HADOKEN", "SHUNGOKUSATSU"}
+        is_i_key = attack_id == "P1_S"
+        
         if is_command_move:
             hit_cancel_frames = int(getattr(constants, "HIT_CANCEL_WINDOW_FRAMES", 8))
             attacker._hit_cancel_window_frames_left = max(attacker._hit_cancel_window_frames_left, hit_cancel_frames)
+        elif is_i_key:
+            # Iキーは全体フレーム分のキャンセル猶予を与える
+            info = attacker.get_last_move_frame_info()
+            if info is not None:
+                # 全体フレーム = startup + active + recovery
+                total_frames = int(getattr(info, "total_frames", 0))
+                # 現在の経過フレーム数を取得
+                elapsed = int(getattr(attacker, "_attack_elapsed_frames", 0))
+                # 残りフレーム数をキャンセル猶予として設定
+                remaining_frames = max(0, total_frames - elapsed)
+                attacker._hit_cancel_window_frames_left = max(attacker._hit_cancel_window_frames_left, remaining_frames)
         
         # ダウン判定：特定の技（突進攻撃の根元ヒット）はダウンさせる
         should_knockdown = False

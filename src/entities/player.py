@@ -42,9 +42,11 @@ class Player:
         x: int,
         color: tuple[int, int, int],
         character: CharacterDefinition,
+        player_id: int = 1,
     ) -> None:
         self.color = color
         self.character = character
+        self.player_id = int(player_id)  # プレイヤーID（1 or 2）
 
         # pos_x / pos_y は「キャラクターの足元（接地中点）」を表す。
         # AIR のオフセット適用や、描画の基準点として使う。
@@ -70,6 +72,10 @@ class Player:
 
         # 向き（右:+1 / 左:-1）。main 側で「相手の位置」を見て更新する。
         self.facing: int = 1
+        
+        # ジャンプ方向（前ジャンプ/後ろジャンプのアニメーション判定用）
+        # 0: 垂直, 1: 前方, -1: 後方
+        self._jump_direction: int = 0
 
         # ダッシュ（前/後ダブルタップ）
         self._dash_frames_left: int = 0
@@ -169,6 +175,19 @@ class Player:
         self._rush_recovery_total_frames: int = 0
         self._rush_has_hit: bool = False
 
+        # Kキー攻撃エフェクト（6540砂ぼこり）のスポーン管理
+        self._k_attack_effect_pending: bool = False
+        
+        # 投げ技関連
+        self._throw_startup_frames_left: int = 0  # 投げ発生までのフレーム数
+        self._throw_active: bool = False  # 投げ判定が出ているか
+        self._throw_direction: int = 0  # 投げ方向（1: 前投げ, -1: 後ろ投げ）
+        self._being_thrown: bool = False  # 投げられている状態か
+        self._throw_anim_frames_left: int = 0  # 投げアニメーション残りフレーム数
+        self._throw_end_pos_x: float | None = None  # 投げ終了時のX座標
+        self._k_attack_effect_pos: tuple[int, int] | None = None
+        self._k_attack_effect_facing: int = 1
+
         # ガード硬直（操作不能）。0 の時は通常。
         self.blockstun_frames_left: int = 0
 
@@ -242,6 +261,14 @@ class Player:
         if self.in_blockstun:
             return True
         return self._guard_buffer_frames_left > 0
+    
+    def is_standing_guard(self) -> bool:
+        """立ちガード状態かどうかを返す（中段攻撃のガード判定用）"""
+        return self.is_guarding_intent() and not self.crouching
+    
+    def is_crouching_guard(self) -> bool:
+        """しゃがみガード状態かどうかを返す（下段攻撃のガード判定用）"""
+        return self.is_guarding_intent() and self.crouching
 
     def enter_hitstun(self, *, frames: int | None = None) -> None:
         # HIT（のけぞり）状態へ遷移し、AIR Action 5000 を oneshot 再生する。
@@ -431,9 +458,19 @@ class Player:
             return
 
         if inp.attack_id is not None:
+            # 投げ技（THROW）は「Oキー（P1_D） + 方向入力」で成立
+            atk = str(inp.attack_id)
+            if atk == "P1_D" and inp.move_x != 0 and self._can_start_buffered_attack_now():
+                # 前投げ/後ろ投げの判定
+                move_dir = 1 if inp.move_x > 0 else -1
+                throw_dir = 1 if move_dir == self.facing else -1
+                self.attack_buffer.clear()
+                self.start_throw(throw_dir)
+                self._push_button_history(atk)
+                return
+            
             # 突進（RUSH）は「方向コマンド + キック」で成立するため、
             # 通常キック攻撃を start_attack する前に判定して優先的に発動する。
-            atk = str(inp.attack_id)
             if atk in set(getattr(self.character, "rush_attack_ids", set())):
                 self._push_button_history(atk)
                 if (
@@ -510,6 +547,12 @@ class Player:
         if inp.jump_pressed and self.on_ground:
             self.vel_y = constants.JUMP_VELOCITY
             self.on_ground = False
+            # ジャンプ方向を記録（アニメーション用）
+            if abs(self.vel_x) > 0.01:
+                move_dir = 1 if self.vel_x > 0 else -1
+                self._jump_direction = 1 if move_dir == self.facing else -1
+            else:
+                self._jump_direction = 0
 
         self._try_consume_buffered_attack()
 
@@ -711,7 +754,7 @@ class Player:
             pass
 
     def _push_attack_buffer(self, attack_id: str) -> None:
-        buf_frames = int(getattr(constants, "INPUT_BUFFER_FRAMES", 10))
+        buf_frames = int(getattr(constants, "ATTACK_BUFFER_FRAMES", 8))
         now = int(self._input_frame_counter)
         self.attack_buffer.append((now, str(attack_id)))
         cutoff = now - max(1, buf_frames)
@@ -972,7 +1015,8 @@ class Player:
     def start_rush(self) -> None:
         if self.is_rushing() or int(self._rush_recovery_frames_left) > 0:
             return
-        if self.attacking:
+        # ヒットキャンセルウィンドウ中は攻撃中でも突進を許可
+        if self.attacking and self._hit_cancel_window_frames_left <= 0:
             return
         if self.in_hitstun or self.in_blockstun:
             return
@@ -1012,11 +1056,76 @@ class Player:
         self._rush_effect_pending = True
         self._rush_effect_pos = (int(self.rect.centerx), int(self.rect.bottom) - 12)
 
+    def start_throw(self, throw_direction: int) -> None:
+        """
+        投げ技を開始する
+        
+        Args:
+            throw_direction: 投げ方向（1: 前投げ, -1: 後ろ投げ）
+        """
+        # 投げ中は他の攻撃をキャンセル
+        self._attack_frames_left = 0
+        self._attack_has_hit = False
+        self._attack_id = "P1_THROW"
+        
+        # 投げ状態の設定
+        self._throw_startup_frames_left = int(getattr(constants, "THROW_STARTUP_FRAMES", 2))
+        self._throw_active = False
+        self._throw_direction = int(throw_direction)
+        
+        # 投げアニメーションを設定
+        # facing: 1=右向き, -1=左向き
+        # throw_direction: 1=前投げ, -1=後ろ投げ
+        if self.facing == 1:
+            if throw_direction == 1:
+                # 右向きで前投げ（右に投げる）: action 800
+                action_id = 800
+            else:
+                # 右向きで後ろ投げ（左に投げる）: action 801
+                action_id = 801
+        else:
+            if throw_direction == 1:
+                # 左向きで前投げ（左に投げる）: action 802
+                action_id = 802
+            else:
+                # 左向きで後ろ投げ（右に投げる）: action 803
+                action_id = 803
+        
+        if action_id in self._air_actions:
+            self._set_action(action_id, mode="oneshot")
+        
+        # フレームデータから情報を取得
+        try:
+            frame_data_dict = getattr(self.character, "frame_data", None)
+            if frame_data_dict:
+                frame_data = frame_data_dict.get("P1_THROW")
+                if frame_data:
+                    startup = int(getattr(frame_data, "startup_frames", 2))
+                    active = int(getattr(frame_data, "active_frames", 1))
+                    recovery = int(getattr(frame_data, "recovery_frames", 20))
+                    self._last_move_frame_info = MoveFrameInfo(
+                        attack_id="P1_THROW",
+                        total_frames=max(1, int(startup + active + recovery)),
+                        startup_frames=max(0, int(startup)),
+                        active_frames=max(0, int(active)),
+                        recovery_frames=max(0, int(recovery)),
+                    )
+        except Exception:
+            pass
+
     def is_rushing(self) -> bool:
         return int(self._rush_frames_left) > 0 or int(self._rush_startup_frames_left) > 0
 
     def is_rush_attack_active(self) -> bool:
         return int(self._rush_frames_left) > 0
+    
+    def is_throwing(self) -> bool:
+        """投げ技を実行中かどうか"""
+        return int(self._throw_startup_frames_left) > 0 or self._throw_active
+    
+    def is_throw_active(self) -> bool:
+        """投げの判定が出ているかどうか"""
+        return self._throw_active
     
     def is_rush_early_hit(self) -> bool:
         """突進攻撃が根元（発動直後）でヒットしたかを判定。根元ヒット時のみダウンさせる。"""
@@ -1044,12 +1153,36 @@ class Player:
         r = pygame.Rect(0, 0, int(w), int(h))
         r.midbottom = (int(cx), int(by))
         return r
+    
+    def get_throw_hitbox(self) -> pygame.Rect:
+        """投げ技の当たり判定を取得"""
+        throw_range = int(getattr(constants, "THROW_RANGE_PX", 60))
+        throw_height = 80
+        
+        # キャラクターの前方に投げ間合いの判定を作る
+        cx = int(self.rect.centerx + (self.facing * (throw_range // 2)))
+        cy = int(self.rect.centery)
+        
+        r = pygame.Rect(0, 0, throw_range, throw_height)
+        r.center = (cx, cy)
+        return r
 
     def consume_rush_effect_spawn(self) -> tuple[int, int] | None:
         if not self._rush_effect_pending:
             return None
         self._rush_effect_pending = False
         return self._rush_effect_pos
+
+    def consume_k_attack_effect_spawn(self) -> dict[str, Any] | None:
+        """Kキー攻撃エフェクト（6540砂ぼこり）のスポーン情報を取得"""
+        if not self._k_attack_effect_pending:
+            return None
+        self._k_attack_effect_pending = False
+        return {
+            "pos": self._k_attack_effect_pos,
+            "facing": self._k_attack_effect_facing,
+            "owner_side": 1 if self.player_id == 1 else 2,
+        }
 
     def start_shinku_hadoken(self) -> None:
         action_id = self._best_action_id(list(getattr(self.character, "shinku_action_candidates", [int(getattr(constants, "SHINKU_HADOKEN_ACTION_ID", 8000))])))
@@ -1370,6 +1503,36 @@ class Player:
             if self.hitstun_timer < 0:
                 self.hitstun_timer = 0
 
+        # 投げられている側の処理
+        if self._being_thrown and self._throw_anim_frames_left > 0:
+            self._throw_anim_frames_left -= 1
+            self.vel_x = 0.0
+            self.vel_y = 0.0
+            
+            if self._throw_anim_frames_left <= 0:
+                # 投げアニメーション終了：ダウン状態に移行
+                self._being_thrown = False
+                
+                # 後ろ投げの場合、位置を移動
+                if self._throw_end_pos_x is not None:
+                    self.pos_x = float(self._throw_end_pos_x)
+                    self._throw_end_pos_x = None
+                
+                # ダウンアニメーションに移行
+                self.enter_knockdown()
+        
+        # 投げ技：発生フレーム後に判定を出す
+        if self._throw_startup_frames_left > 0:
+            self._throw_startup_frames_left -= 1
+            self.vel_x = 0.0
+            if self._throw_startup_frames_left <= 0:
+                # 発生フレーム終了後、投げ判定をアクティブにする
+                self._throw_active = True
+        elif self._throw_active:
+            # 投げ判定は1フレームのみ
+            # ヒット判定は CombatSystem で行われる
+            pass
+        
         # 突進技：初期モーション後、一定フレーム前進して終了。
         if self._rush_startup_frames_left > 0:
             self._rush_startup_frames_left -= 1
@@ -1442,6 +1605,22 @@ class Player:
                 self._shinku_spawned = True
                 self._shinku_spawn_pending = True
 
+        # HS攻撃（6570）の最終フレーム（6430-28）で砂ぼこりエフェクト（6540）をスポーン
+        if (
+            int(self._current_action_id or -1) == 6570
+            and self._attack_id == "P1_HS"
+            and (not self._k_attack_effect_pending)
+        ):
+            # Action 6570は5フレーム（6430-23,24,25,26,28）なので、frame_index 4（最後のフレーム）でスポーン
+            if int(self._frame_index) == 4 and prev_frame_index != 4:
+                # エフェクトをキャラクターの中心点から少し上に発生
+                spawn_x = int(self.rect.centerx)
+                spawn_y = int(self.rect.centery) - 19  # 19px上に調整
+                
+                self._k_attack_effect_pending = True
+                self._k_attack_effect_pos = (spawn_x, spawn_y)
+                self._k_attack_effect_facing = int(self.facing)
+
         self._update_multihit_state()
 
         # oneshot 終了（攻撃など）→ Idle へ戻す。
@@ -1478,6 +1657,7 @@ class Player:
             self.pos_y = float(constants.GROUND_Y)
             self.vel_y = 0.0
             self.on_ground = True
+            self._jump_direction = 0  # 着地時にジャンプ方向をリセット
 
         # 画面外に出ないように補正。
         half_w = self.rect.width / 2.0
@@ -1502,10 +1682,19 @@ class Player:
     def _update_state_action(self) -> None:
         # まず空中判定（ジャンプ）。
         if not self.on_ground:
-            if self.vel_y < 0:
-                self._set_action(self._best_action_id([41, 40]), mode="loop")
+            # 前ジャンプ/後ろジャンプで異なるアニメーションを使用
+            if self._jump_direction == 1:
+                # 前ジャンプ: action 42 (42-0 から 42-12)
+                self._set_action(self._best_action_id([42, 41, 40]), mode="loop")
+            elif self._jump_direction == -1:
+                # 後ろジャンプ: action 43 (42-12 から 42-0 の逆再生)
+                self._set_action(self._best_action_id([43, 42, 41, 40]), mode="loop")
             else:
-                self._set_action(self._best_action_id([47, 40]), mode="loop")
+                # 垂直ジャンプ: 従来通り
+                if self.vel_y < 0:
+                    self._set_action(self._best_action_id([41, 40]), mode="loop")
+                else:
+                    self._set_action(self._best_action_id([47, 40]), mode="loop")
             return
 
         # しゃがみ。

@@ -1,220 +1,472 @@
+"""フレームデータ定義モジュール
+
+このモジュールは、格闘ゲームの各攻撃技のフレームデータを定義します。
+フレームデータには以下の情報が含まれます：
+
+1. 発生・持続・硬直フレーム（技の基本性能）
+2. ヒット/ガード時の有利フレーム（攻防の読み合いに影響）
+3. ダメージ・ノックバック・ヒットストップ（ヒット時の挙動）
+4. 当たり判定の形状と位置（ヒットボックス）
+5. アニメーション速度（技の見た目の速さ）
+
+使用方法:
+    from src.characters.frame_data import RYUKO_FRAME_DATA
+    
+    # 攻撃IDからフレームデータを取得
+    frame_data = RYUKO_FRAME_DATA.get("P1_P")
+    if frame_data:
+        print(f"発生: {frame_data.startup_frames}F")
+        print(f"ヒット有利: {frame_data.hit_advantage:+d}F")
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from src.utils.constants import AttackAttribute
 
 
 @dataclass(frozen=True)
 class AttackFrameData:
     """
-    攻撃のフレームデータ定義。
+    攻撃のフレームデータ定義クラス。
     
-    各攻撃の詳細なフレーム情報とヒット/ガード時の有利フレームを定義します。
+    各攻撃技の詳細なフレーム情報とヒット/ガード時の有利フレームを定義します。
+    このデータは combat.py でヒット判定処理に使用され、
+    player.py でアニメーション速度制御に使用されます。
+    
+    フレームデータの読み方:
+        - 発生フレーム: 入力から攻撃判定が出るまでの時間
+        - 持続フレーム: 攻撃判定が出ている時間
+        - 硬直フレーム: 攻撃後に動けない時間
+        - 全体フレーム: 発生 + 持続 + 硬直
+        
+    有利フレームの計算:
+        - ヒット有利 = 相手のヒットストン - 自分の硬直
+        - ガード有利 = 相手のガードストン - 自分の硬直
+        - 正の値: 攻撃側が先に動ける（有利）
+        - 負の値: 防御側が先に動ける（不利）
     """
-    # 攻撃ID（例: "P1_U_LP", "P1_I_MP"）
+    # ============================================================
+    # 基本情報
+    # ============================================================
+    # 攻撃ID（例: "P1_P", "P1_K", "P1_S", "P1_HS", "P1_D"）
+    # Guilty Gear Strive方式の5ボタン配置に対応
     attack_id: str
     
-    # ダメージ
+    # ダメージ量（整数値）
+    # 例: 55 = 小技、110 = 中技、200 = 大技
+    # 相手のHPから直接減算される値
     damage: int
     
-    # === フレーム情報 ===
+    # ============================================================
+    # フレーム情報（技の基本性能）
+    # ============================================================
     # 発生フレーム: 攻撃開始から当たり判定が出るまでのフレーム数
+    # 例: 4F = 高速技、9F = 中速技、15F = 遅い技
+    # 小さいほど相手の隙に差し込みやすい
     startup_frames: int
     
     # 持続フレーム: 当たり判定が出ている期間のフレーム数
+    # 例: 2F = 一瞬、6F = 長め
+    # 長いほど相手の動きに引っかかりやすい
     active_frames: int
     
     # 硬直フレーム: 攻撃後の隙（recovery）のフレーム数
+    # 例: 5F = 隙が小さい、15F = 隙が大きい
+    # 小さいほど反撃を受けにくい
+    # 全体フレーム = startup_frames + active_frames + recovery_frames
     recovery_frames: int
     
-    # === ヒット/ガード時の有利フレーム ===
-    # ヒット時有利フレーム: 正の値なら攻撃側が有利、負の値なら不利
-    # 例: +3 なら攻撃側が3フレーム先に動ける、-2なら防御側が2フレーム先に動ける
+    # ============================================================
+    # ヒット/ガード時の有利フレーム（攻防の読み合いに影響）
+    # ============================================================
+    # ヒット時有利フレーム: ヒット時に攻撃側がどれだけ先に動けるか
+    # 計算式: hitstun_frames - recovery_frames
+    # 例: +4 = 攻撃側が4F先に動ける（追撃可能）
+    #     +1 = 攻撃側が1F先に動ける（五分に近い）
+    #     -2 = 防御側が2F先に動ける（反撃確定）
+    # 正の値が大きいほど連続技や攻め継続がしやすい
     hit_advantage: int
     
-    # ガード時有利フレーム: 正の値なら攻撃側が有利、負の値なら不利
-    # 通常、ガード時は攻撃側が不利になることが多い（例: -2, -5など）
+    # ガード時有利フレーム: ガード時に攻撃側がどれだけ先に動けるか
+    # 計算式: blockstun_frames - recovery_frames
+    # 例: -1 = 防御側が1F先に動ける（ほぼ五分）
+    #     -5 = 防御側が5F先に動ける（反撃確定）
+    #     +2 = 攻撃側が2F先に動ける（攻め継続可能）
+    # 通常、ガード時は攻撃側が不利になることが多い（リスク・リターンのバランス）
     guard_advantage: int
     
-    # === ヒット時の挙動 ===
-    # ノックバック距離（px）
+    # ============================================================
+    # ヒット時の挙動（ヒット演出とゲームフィール）
+    # ============================================================
+    # ノックバック距離（ピクセル単位）
+    # 例: 10px = 小さい押し戻し、20px = 大きい押し戻し
+    # ヒット時に相手が後方に押し戻される距離
+    # 大きいほど間合いが離れ、追撃が難しくなる
     knockback_px: int
     
-    # ヒットストップフレーム数
+    # ヒットストップフレーム数（ヒット時の一時停止）
+    # 例: 6F = 通常、10F = 重い一撃
+    # ヒット時に両者が一瞬停止する演出フレーム数
+    # 大きいほど重厚感のある攻撃に見える
     hitstop_frames: int
     
     # ヒットストン（のけぞり）フレーム数
+    # 例: 10F = 短いのけぞり、20F = 長いのけぞり
+    # 相手がのけぞって動けない時間
     # hit_advantage と連動: hitstun_frames - recovery_frames = hit_advantage
+    # 大きいほど追撃や連続技がしやすい
     hitstun_frames: int
     
     # ガードストン（ガード硬直）フレーム数
+    # 例: 5F = 短いガード硬直、12F = 長いガード硬直
+    # 相手がガード後に動けない時間
     # guard_advantage と連動: blockstun_frames - recovery_frames = guard_advantage
+    # 小さいほど反撃を受けやすい
     blockstun_frames: int
     
-    # === その他 ===
-    # 攻撃側の反動（押し戻し）距離（px）
+    # ============================================================
+    # その他のパラメータ（細かい調整用）
+    # ============================================================
+    # 攻撃側の反動（押し戻し）距離（ピクセル単位）
+    # 例: 0px = 反動なし、3px = 通常の反動
+    # 攻撃時に自分が後方に押し戻される距離
+    # 大きいほど攻撃後の間合いが離れる
     attacker_recoil_px: int = 1
     
     # 追加の硬直フレーム（特定の技で使用）
+    # 例: 0F = 追加硬直なし、10F = 大きな追加硬直
+    # recovery_frames に加算される追加の硬直時間
+    # 突進技など、特殊な硬直が必要な技で使用
     recovery_bonus_frames: int = 0
     
-    # ガード時のチップダメージ比率（0.0-1.0）
+    # ガード時のチップダメージ比率（0.0～1.0）
+    # 例: 0.0 = チップダメージなし、0.1 = ダメージの10%
+    # ガード時に与えるダメージの割合
+    # 通常は0.0（チップダメージなし）
     chip_damage_ratio: float = 0.0
     
-    # ヒット時にダウンさせるか
+    # ヒット時にダウンさせるか（ブール値）
+    # True: ヒット時に相手をダウンさせる（強制ダウン）
+    # False: ヒット時に相手は立ちのけぞり
+    # 突進技や必殺技など、強力な技で True に設定
     causes_knockdown: bool = False
     
-    # === 当たり判定（Hitbox）の形状と位置 ===
-    # 当たり判定の幅（px）
+    # ============================================================
+    # 当たり判定（Hitbox）の形状と位置
+    # ============================================================
+    # 当たり判定の幅（ピクセル単位）
+    # 例: 15px = 狭い判定、60px = 広い判定
+    # 攻撃の横方向のリーチを決定
+    # 大きいほど遠くの相手に当たりやすい
     hitbox_width: int = 40
     
-    # 当たり判定の高さ（px）
+    # 当たり判定の高さ（ピクセル単位）
+    # 例: 22px = 低い判定、70px = 高い判定
+    # 攻撃の縦方向のリーチを決定
+    # 大きいほど上下の相手に当たりやすい
     hitbox_height: int = 25
     
-    # 当たり判定のX方向オフセット（キャラクターの中心からの距離、px）
+    # 当たり判定のX方向オフセット（ピクセル単位）
+    # キャラクターの中心（rect.centerx）からの水平距離
+    # 例: 0px = キャラ中心、30px = 前方30px
+    # facing方向（左右反転）に応じて自動調整される
+    # 正の値で前方、負の値で後方に判定が出る
     hitbox_offset_x: int = 30
     
-    # 当たり判定のY方向オフセット（キャラクターの上端からの距離、px）
+    # 当たり判定のY方向オフセット（ピクセル単位）
+    # キャラクターの上端（rect.top）からの垂直距離
+    # 例: 20px = 上端から20px下、-20px = 上端から20px上
+    # 正の値で下方向、負の値で上方向に判定が出る
+    # 足技は負の値、パンチは正の値を使うことが多い
     hitbox_offset_y: int = 20
     
-    # === 入力視覚インジケーター ===
-    # 入力から何フレーム後に視覚的な赤枠を表示するか（0なら即座、Nなら入力後Nフレーム）
-    # これは実際のヒット判定とは別で、入力受付を視覚的に示すためのもの
+    # ============================================================
+    # 入力視覚インジケーター（デバッグ・トレーニング用）
+    # ============================================================
+    # 入力から何フレーム後に視覚的な赤枠を表示するか
+    # 例: 0 = 入力直後に表示、3 = 入力3F後に表示
+    # これは実際のヒット判定（startup_frames）とは別で、
+    # 入力受付を視覚的に示すためのもの
+    # トレーニングモードで入力タイミングを確認するのに便利
     input_visual_frame: int = 0
     
-    # === アニメーション速度 ===
-    # アニメーション再生速度の倍率（1.0 = 通常速度、0.5 = 半分の速度、2.0 = 2倍速）
-    # 小数点第一位まで設定可能（例: 0.8, 1.2, 1.5など）
+    # ============================================================
+    # アニメーション速度（技の見た目の速さ）
+    # ============================================================
+    # アニメーション再生速度の倍率
+    # 例: 1.0 = 通常速度、1.3 = 1.3倍速、0.8 = 0.8倍速
+    # 小数点第一位まで設定可能（0.1～10.0の範囲）
+    # 
+    # 使用例:
+    #   - 1.3: 素早い技（パンチ、キックなど）
+    #   - 1.0: 通常速度（標準的な技）
+    #   - 0.8: ゆっくりした技（溜め攻撃など）
+    # 
+    # 注意: これはアニメーションの見た目の速さであり、
+    #       フレームデータ（発生・持続・硬直）には影響しない
     animation_speed: float = 1.0
+    
+    # ============================================================
+    # 攻撃属性（ガード判定用）
+    # ============================================================
+    # 攻撃属性: どのガード姿勢で防げるかを決定
+    # - MID: 立ち・しゃがみ両方でガード可能（通常攻撃）
+    # - OVERHEAD: 立ちガードでのみガード可能（中段攻撃）
+    # - LOW: しゃがみガードでのみガード可能（下段攻撃）
+    # 
+    # デフォルトは MID（通常攻撃）
+    attack_attribute: AttackAttribute = AttackAttribute.MID
 
 
+# ============================================================
 # RYUKOキャラクターのフレームデータ定義
+# ============================================================
+# Guilty Gear Strive方式: P/K/S/HS/D の5ボタン配置
+#
+# ボタン配置:
+#   P  (Punch)       - Uキー: 小技、発生が速い
+#   K  (Kick)        - Jキー: 中技、リーチが長い
+#   S  (Slash)       - Iキー: 中技、バランス型
+#   HS (Heavy Slash) - Kキー: 大技、砂ぼこり攻撃
+#   D  (Dust Attack) - Oキー: 対空技、足を振り上げる
+#
+# フレームデータの見方:
+#   発生4F/持続4F/硬直7F = 全体15F
+#   ヒット+4F = ヒット時に攻撃側が4F先に動ける
+#   ガード-1F = ガード時に防御側が1F先に動ける
+#
 RYUKO_FRAME_DATA: dict[str, AttackFrameData] = {
-    # 小パンチ（Uキー）
-    "P1_U_LP": AttackFrameData(
-        attack_id="P1_U_LP",
-        damage=55,
-        startup_frames=4,      # 小パンチ: 発生フレーム
-        active_frames=4,       # 小パンチ: 持続フレーム
-        recovery_frames=7,     # 小パンチ: 硬直フレーム
-        hit_advantage=+4,      # 小パンチ: ヒット時
-        guard_advantage=-1,    # 小パンチ: ガード時
-        knockback_px=10,
-        hitstop_frames=6,
-        hitstun_frames=10,     # recovery(6) + hit_advantage(+4) = 10
-        blockstun_frames=5,    # recovery(6) + guard_advantage(-1) = 5
-        attacker_recoil_px=0,
-        hitbox_width=15,
+    # ============================================================
+    # P (Punch) - Uキー
+    # ============================================================
+    # 発生4F/持続4F/硬直7F (全体15F)
+    # ヒット+4F/ガード-1F
+    # 
+    # 特徴:
+    #   - 最速の小技（発生4F）
+    #   - ヒット時に有利（+4F）で連続技に繋がる
+    #   - ガード時はほぼ五分（-1F）
+    #   - リーチは短いが確実に当てやすい
+    # 
+    # 使用場面:
+    #   - 近距離での差し込み
+    #   - 連続技の始動
+    #   - 暴れ潰し
+    "P1_P": AttackFrameData(
+        attack_id="P1_P",
+        damage=55,              # ダメージ量
+        startup_frames=4,       # 発生フレーム
+        active_frames=4,        # 持続フレーム
+        recovery_frames=7,      # 硬直フレーム
+        hit_advantage=+4,       # ヒット時有利フレーム
+        guard_advantage=-1,     # ガード時有利フレーム
+        knockback_px=10,        # ノックバック距離
+        hitstop_frames=6,       # ヒットストップ
+        hitstun_frames=10,      # ヒットストン
+        blockstun_frames=5,     # ガードストン
+        attacker_recoil_px=0,   # 攻撃側の反動
+        hitbox_width=15,        # 当たり判定の幅
         hitbox_height=22,
         hitbox_offset_x=0,
         hitbox_offset_y=28,
-        input_visual_frame=0,  # 入力直後に視覚インジケーター表示
+        input_visual_frame=0,
         animation_speed=1.0,
     ),
     
-    # 中パンチ（Iキー）
-    "P1_I_MP": AttackFrameData(
-        attack_id="P1_I_MP",
-        damage=65,
-        startup_frames=9,      # 中パンチ: 発生フレーム
-        active_frames=6,       # 中パンチ: 持続フレーム
-        recovery_frames=5,     # 中パンチ: 硬直フレーム
-        hit_advantage=+7,      # 中パンチ: ヒット時
-        guard_advantage=-1,    # 中パンチ: ガード時
-        knockback_px=10,
-        hitstop_frames=6,
-        hitstun_frames=15,     # recovery(8) + hit_advantage(+7) = 15
-        blockstun_frames=7,    # recovery(8) + guard_advantage(-1) = 7
-        attacker_recoil_px=1,
-        hitbox_width=50,
-        hitbox_height=22,
-        hitbox_offset_x=0,
-        hitbox_offset_y=5,
-        input_visual_frame=0,  # 入力直後に視覚インジケーター表示
+    # ============================================================
+    # S (Slash) - Iキー
+    # ============================================================
+    # 発生9F/持続6F/硬直5F (全体20F)
+    # ヒット+7F/ガード-1F
+    # 
+    # 特徴:
+    #   - 中速の中技（発生9F）
+    #   - ヒット時に大きく有利（+7F）で追撃確定
+    #   - リーチが長い（hitbox_width=50）
+    #   - アニメーションが速い（1.3倍速）
+    # 
+    # 使用場面:
+    #   - 中距離での牽制
+    #   - ヒット確認からの連続技
+    #   - 相手の技の隙に差し込む
+    "P1_S": AttackFrameData(
+        attack_id="P1_S",
+        damage=65,              # ダメージ量
+        startup_frames=9,       # 発生フレーム
+        active_frames=6,        # 持続フレーム
+        recovery_frames=5,      # 硬直フレーム
+        hit_advantage=+7,       # ヒット時有利フレーム
+        guard_advantage=-1,     # ガード時有利フレーム
+        knockback_px=10,        # ノックバック距離
+        hitstop_frames=6,       # ヒットストップ
+        hitstun_frames=15,      # ヒットストン
+        blockstun_frames=7,     # ガードストン
+        attacker_recoil_px=1,   # 攻撃側の反動
+        hitbox_width=50,        # 当たり判定の幅
+        hitbox_height=22,       # 当たり判定の高さ
+        hitbox_offset_x=0,      # 当たり判定のX方向オフセット
+        hitbox_offset_y=5,      # 当たり判定のY方向オフセット
+        input_visual_frame=0,
         animation_speed=1.3,
     ),
     
-    # 大パンチ（Oキー）
-    "P1_O_HP": AttackFrameData(
-        attack_id="P1_O_HP",
-        damage=40,
-        startup_frames=8,      # 大パンチ: 発生フレーム（8F発生）
-        active_frames=5,       # 大パンチ: 持続フレーム
-        recovery_frames=8,    # 大パンチ: 硬直フレーム
-        hit_advantage=+2,      # 大パンチ: ヒット時+2F有利
-        guard_advantage=-4,    # 大パンチ: ガード時-5F不利
-        knockback_px=8,
-        hitstop_frames=5,
-        hitstun_frames=12,     # recovery(10) + hit_advantage(+2) = 12
-        blockstun_frames=5,    # recovery(10) + guard_advantage(-5) = 5
-        attacker_recoil_px=1,
-        recovery_bonus_frames=6,
-        hitbox_width=58,
-        hitbox_height=32,
-        hitbox_offset_x=36,
-        hitbox_offset_y=46,
-        causes_knockdown=True,
+    # ============================================================
+    # D (Dust Attack) - Oキー
+    # ============================================================
+    # 発生8F/持続6F/硬直10F (全体24F)
+    # ヒット+3F/ガード-3F
+    # 
+    # アニメーション: AIR action 6000 (frames 6000-8～6000-18)
+    #   - 準備モーション: 6000-8, 9, 10 (3フレーム)
+    #   - 攻撃判定あり: 6000-11～16 (6フレーム)
+    #   - 硬直モーション: 6000-17, 18 (2フレーム)
+    # 
+    # 特徴:
+    #   - 足を振り上げる対空技
+    #   - 上方向に判定が広い（hitbox_height=70, offset_y=-20）
+    #   - ヒット時に有利（+3F）
+    #   - ガード時は不利（-3F）
+    # 
+    # 使用場面:
+    #   - 対空迎撃
+    #   - ジャンプ攻撃への対処
+    #   - 中距離での牽制
+    "P1_D": AttackFrameData(
+        attack_id="P1_D",
+        damage=70,                  # ダメージ量
+        startup_frames=14,           # 発生フレーム: 足を振り上げ始めてから当たり判定が出るまで  
+        active_frames=4,            # 持続フレーム: 当たり判定が出ている期間
+        recovery_frames=7,         # 硬直フレーム: 攻撃後の隙
+        hit_advantage=+8,           # ヒット時有利フレーム: ヒット時に攻撃側が3F先に動ける
+        guard_advantage=-3,         # ガード時有利フレーム: ガード時に防御側が3F先に動ける
+        knockback_px=15,            # ノックバック距離: ヒット時に相手が押し戻される距離（px）
+        hitstop_frames=7,           # ヒットストップ: ヒット時の停止フレーム数
+        hitstun_frames=13,          # ヒットストン: 相手ののけぞりフレーム数
+        blockstun_frames=7,         # ガードストン: 相手のガード硬直フレーム数
+        attacker_recoil_px=2,       # 攻撃側の反動: 攻撃時に自分が押し戻される距離（px）
+        recovery_bonus_frames=0,    # 追加硬直フレーム: 特殊な硬直が必要な場合に使用
+        hitbox_width=25,            # 当たり判定の幅: 足の横方向のリーチ（px）
+        hitbox_height=70,           # 当たり判定の高さ: 足を振り上げた縦方向のリーチ（px）
+        hitbox_offset_x=0,         # 当たり判定のX座標オフセット: キャラ中心から前方への距離（px）
+        hitbox_offset_y=-20,        # 当たり判定のY座標オフセット: キャラ上端から上方向への距離（px、負の値で上方向）
+        causes_knockdown=False,     # ダウンさせるか: この技はダウンさせない
+        input_visual_frame=0,       # 入力視覚インジケーター: 入力直後に表示
+        animation_speed=0.7,        # アニメーション速度: 通常速度
+        attack_attribute=AttackAttribute.OVERHEAD,  # 中段攻撃: 立ちガードでのみガード可能
+    ),
+    
+    # ============================================================
+    # K (Kick) - Jキー
+    # ============================================================
+    # 発生5F/持続2F/硬直8F (全体15F)
+    # ヒット+2F/ガード-2F
+    # 
+    # 特徴:
+    #   - 高速の中技（発生5F）
+    #   - ダメージが高い（110）
+    #   - リーチが長い（hitbox_width=48, offset_x=32）
+    #   - 持続が短い（2F）ので当てにくい
+    # 
+    # 使用場面:
+    #   - 中距離での差し込み
+    #   - 相手の隙への確定反撃
+    #   - コンボパーツ
+    "P1_K": AttackFrameData(
+        attack_id="P1_K",
+        damage=55,             
+        startup_frames=5,       # 発生フレーム
+        active_frames=2,        # 持続フレーム
+        recovery_frames=8,      # 硬直フレーム
+        hit_advantage=+2,       # ヒット時有利フレーム
+        guard_advantage=-2,     # ガード時有利フレーム
+        knockback_px=16,        # ノックバック距離
+        hitstop_frames=8,       # ヒットストップ
+        hitstun_frames=13,      # ヒットストン
+        blockstun_frames=6,     # ガードストン
+        attacker_recoil_px=3,   # 攻撃側の反動
+        hitbox_width=28,        # 当たり判定の幅
+        hitbox_height=28,       # 当たり判定の高さ
+        hitbox_offset_x=0,     # 当たり判定のX方向オフセット
+        hitbox_offset_y=50,     # 当たり判定のY方向オフセット
+        input_visual_frame=0,
+        animation_speed=0.4,
+    ),
+    
+    # ============================================================
+    # HS (Heavy Slash) - Kキー
+    # ============================================================
+    # 発生6F/持続0F/硬直19F (全体25F)
+    # ヒット+5F/ガード-2F
+    # 
+    # アニメーション: AIR action 6570 (frames 6430-23～28)
+    # エフェクト: 6540 (frames 1～17) ← ここに攻撃判定
+    # 
+    # 特徴:
+    #   - 砂ぼこりを発生させる特殊技
+    #   - キャラ本体には判定なし（damage=0, hitbox=0）
+    #   - エフェクト（AttackEffect）が攻撃判定を持つ
+    #   - エフェクトの判定: 100x60px, 地面に接地
+    #   - エフェクトのダメージ: 80
+    # 
+    # 使用場面:
+    #   - 中距離での設置技
+    #   - 起き攻め
+    #   - 相手の接近を拒否
+    # 
+    # 注意:
+    #   - キャラ本体のフレームデータは参考値
+    #   - 実際の攻撃判定はエフェクト側で定義
+    #   - main.py の AttackEffect 生成部分を参照
+    "P1_HS": AttackFrameData(
+        attack_id="P1_HS",
+        damage=0,              # キャラ本体には判定なし（エフェクトが攻撃判定）
+        startup_frames=6,      # アニメーション6フレーム（6430-23から6430-28まで）
+        active_frames=0,       # キャラ本体の判定は出さない
+        recovery_frames=19,    # エフェクト17フレーム + 硬直2フレーム
+        hit_advantage=+5,      # エフェクトヒット時の有利フレーム
+        guard_advantage=-2,    # エフェクトガード時の不利フレーム
+        knockback_px=20,       # ノックバック距離
+        hitstop_frames=8,      # ヒットストップ
+        hitstun_frames=15,     # ヒットストン
+        blockstun_frames=8,    # ガードストン
+        attacker_recoil_px=2,
+        hitbox_width=0,        # キャラ本体には判定なし
+        hitbox_height=0,
+        hitbox_offset_x=0,
+        hitbox_offset_y=80,
         input_visual_frame=0,
         animation_speed=1.0,
     ),
     
-    # 小キック（Jキー）
-    "P1_J_LK": AttackFrameData(
-        attack_id="P1_J_LK",
-        damage=110,
-        startup_frames=5,      # 小キック: 発生フレーム
-        active_frames=2,       # 小キック: 持続フレーム
-        recovery_frames=8,     # 小キック: 硬直フレーム
-        hit_advantage=+2,      # 小キック: ヒット時+F有利
-        guard_advantage=-2,    # 小キック: ガード時-F不利
-        knockback_px=16,
-        hitstop_frames=8,
-        hitstun_frames=13,     # recovery(8) + hit_advantage(+5) = 13
-        blockstun_frames=6,    # recovery(8) + guard_advantage(-2) = 6
-        attacker_recoil_px=3,
-        hitbox_width=48,
-        hitbox_height=28,
-        hitbox_offset_x=32,
-        hitbox_offset_y=50,
-        input_visual_frame=0,
-        animation_speed=1.0,
-    ),
-    
-    # 中キック（Kキー）
-    "P1_K_MK": AttackFrameData(
-        attack_id="P1_K_MK",
-        damage=95,
-        startup_frames=6,      # 中キック: 発生フレーム
-        active_frames=5,       # 中キック: 持続フレーム
-        recovery_frames=10,    # 中キック: 硬直フレーム
-        hit_advantage=+4,      # 中キック: ヒット時+4F有利
-        guard_advantage=-3,    # 中キック: ガード時-3F不利
-        knockback_px=16,
-        hitstop_frames=8,
-        hitstun_frames=14,     # recovery(10) + hit_advantage(+4) = 14
-        blockstun_frames=7,    # recovery(10) + guard_advantage(-3) = 7
-        attacker_recoil_px=3,
-        hitbox_width=52,
-        hitbox_height=30,
-        hitbox_offset_x=34,
-        hitbox_offset_y=48,
-        input_visual_frame=0,
-        animation_speed=1.0,
-    ),
-    
-    # 大キック（Lキー）
-    "P1_L_HK": AttackFrameData(
-        attack_id="P1_L_HK",
-        damage=75,
-        startup_frames=5,      # 大キック: 発生フレーム
-        active_frames=4,       # 大キック: 持続フレーム
-        recovery_frames=9,     # 大キック: 硬直フレーム
-        hit_advantage=+3,      # 大キック: ヒット時+3F有利
-        guard_advantage=-4,    # 大キック: ガード時-4F不利
-        knockback_px=12,
-        hitstop_frames=7,
-        hitstun_frames=12,     # recovery(9) + hit_advantage(+3) = 12
-        blockstun_frames=5,    # recovery(9) + guard_advantage(-4) = 5
-        attacker_recoil_px=3,
+    # ============================================================
+    # P2デフォルト攻撃
+    # ============================================================
+    # 発生3F/持続3F/硬直6F (全体12F)
+    # ヒット+2F/ガード-2F
+    # 
+    # 特徴:
+    #   - P2（CPU）専用の攻撃
+    #   - 発生が非常に速い（3F）
+    #   - ダメージは控えめ（50）
+    #   - バランス型の性能
+    # 
+    # 使用場面:
+    #   - CPU戦での基本攻撃
+    #   - トレーニングモードでの練習相手
+    "P2_ATTACK": AttackFrameData(
+        attack_id="P2_ATTACK",
+        damage=50,                  
+        startup_frames=3,           # 発生フレーム
+        active_frames=3,            # 持続フレーム
+        recovery_frames=6,          # 硬直フレーム
+        hit_advantage=+2,           # ヒット時有利フレーム
+        guard_advantage=-2,         # ガード時有利フレーム
+        knockback_px=12,            # ノックバック距離
+        hitstop_frames=6,           # ヒットストップ
+        hitstun_frames=8,           # ヒットストン
+        blockstun_frames=4,         # ガードストン
+        attacker_recoil_px=3,       # 攻撃側の反動
         hitbox_width=35,
         hitbox_height=25,
         hitbox_offset_x=30,
@@ -223,48 +475,89 @@ RYUKO_FRAME_DATA: dict[str, AttackFrameData] = {
         animation_speed=1.0,
     ),
     
-    # P2デフォルト攻撃（仮）
-    "P2_L_PUNCH": AttackFrameData(
-        attack_id="P2_L_PUNCH",
-        damage=50,
-        startup_frames=3,
-        active_frames=3,
-        recovery_frames=6,
-        hit_advantage=+2,
-        guard_advantage=-2,
-        knockback_px=12,
-        hitstop_frames=6,
-        hitstun_frames=8,
-        blockstun_frames=4,
-        attacker_recoil_px=3,
-        hitbox_width=35,
-        hitbox_height=25,
-        hitbox_offset_x=30,
-        hitbox_offset_y=20,
-        input_visual_frame=0,  # 入力直後に視覚インジケーター表示
-        animation_speed=1.0,
-    ),
-    
-    # 突進技
+    # ============================================================
+    # 突進技（RUSH）
+    # ============================================================
+    # 発生6F/持続18F/硬直12F (全体36F + 追加硬直10F = 46F)
+    # ヒット+10F/ガード-6F
+    # 
+    # コマンド: ↙ + K または ↙ + HS
+    # アニメーション: AIR action 6520
+    # 
+    # 特徴:
+    #   - 前方に突進する特殊技
+    #   - 持続が非常に長い（18F）
+    #   - ヒット時にダウンさせる（causes_knockdown=True）
+    #   - ヒット時に大きく有利（+10F）
+    #   - ガード時は大きく不利（-6F）
+    #   - 追加硬直あり（+10F）
+    # 
+    # 使用場面:
+    #   - 奇襲攻撃
+    #   - 相手の飛び道具を抜ける
+    #   - コンボの締め
+    # 
+    # リスク:
+    #   - ガードされると反撃確定
+    #   - 全体フレームが長い（46F）
     "RUSH": AttackFrameData(
         attack_id="RUSH",
-        damage=90,
-        startup_frames=6,
-        active_frames=18,
-        recovery_frames=12,
-        hit_advantage=+10,
-        guard_advantage=-6,
-        knockback_px=18,
-        hitstop_frames=8,
-        hitstun_frames=22,
-        blockstun_frames=6,
-        attacker_recoil_px=0,
+        damage=90,                  # ダメージ量
+        startup_frames=6,           # 発生フレーム
+        active_frames=18,           # 持続フレーム
+        recovery_frames=12,         # 硬直フレーム
+        hit_advantage=+10,          # ヒット時有利フレーム
+        guard_advantage=-6,         # ガード時有利フレーム
+        knockback_px=18,            # ノックバック距離
+        hitstop_frames=8,           # ヒットストップ
+        hitstun_frames=22,          # ヒットストン
+        blockstun_frames=6,         # ガードストン
+        attacker_recoil_px=0,       # 攻撃側の反動
         recovery_bonus_frames=10,
         causes_knockdown=True,  # 突進攻撃はヒット時にダウンさせる
         hitbox_width=60,
         hitbox_height=40,
         hitbox_offset_x=40,
         hitbox_offset_y=30,
+        input_visual_frame=0,
+        animation_speed=1.0,
+    ),
+    
+    # ============================================================
+    # 投げ技 (Throw) - Oキー + 方向キー
+    # ============================================================
+    # 発生2F/持続1F/硬直20F (全体23F)
+    # ヒット時ダウン
+    # 
+    # 特徴:
+    #   - 超高速発生（2F）
+    #   - ガード不能
+    #   - 近距離専用（投げ間合い60px）
+    #   - ヒット時に相手をダウンさせる
+    # 
+    # 使用場面:
+    #   - 固まっている相手への崩し
+    #   - ガード後の密着状況
+    #   - 起き攻め
+    "P1_THROW": AttackFrameData(
+        attack_id="P1_THROW",
+        damage=100,                 # ダメージ量
+        startup_frames=2,           # 発生フレーム: 2F
+        active_frames=1,            # 持続フレーム: 1F
+        recovery_frames=20,         # 硬直フレーム: 20F
+        hit_advantage=+30,          # ヒット時有利フレーム（ダウンするので意味なし）
+        guard_advantage=0,          # ガード不能なので無関係
+        knockback_px=0,             # ノックバック距離: 投げなので0
+        hitstop_frames=10,          # ヒットストップ
+        hitstun_frames=0,           # ヒットストン: ダウンするので0
+        blockstun_frames=0,         # ガードストン: ガード不能
+        attacker_recoil_px=0,       # 攻撃側の反動
+        recovery_bonus_frames=0,
+        causes_knockdown=True,      # 投げは必ずダウンさせる
+        hitbox_width=60,            # 当たり判定の幅: 投げ間合い
+        hitbox_height=80,           # 当たり判定の高さ
+        hitbox_offset_x=30,         # 当たり判定のX座標オフセット
+        hitbox_offset_y=40,         # 当たり判定のY座標オフセット
         input_visual_frame=0,
         animation_speed=1.0,
     ),

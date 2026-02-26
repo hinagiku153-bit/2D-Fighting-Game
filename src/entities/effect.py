@@ -259,3 +259,76 @@ class SuperProjectile(Projectile):
     def register_hit(self) -> None:
         self._hits_done += 1
         self._hit_cooldown = max(0, int(self.hit_interval_frames))
+
+
+@dataclass
+class AttackEffect(Effect):
+    """エフェクトに攻撃判定を持たせるクラス（砂ぼこりなど）"""
+    owner_side: int = 0
+    damage: int = 80
+    hitbox_width: int = 60
+    hitbox_height: int = 40
+    hitbox_offset_x: int = 0
+    hitbox_offset_y: int = 0
+    startup_frames: int = 0
+    active_frames: int = 10
+    hitstop_frames: int = 8
+    hitstun_frames: int = 15
+    blockstun_frames: int = 8
+    knockback_px: int = 20
+    attacker_recoil_px: int = 2
+    _elapsed_frames: int = 0
+    _has_hit: bool = False
+    
+    def update(self) -> None:
+        super().update()
+        if not self._finished:
+            self._elapsed_frames += 1
+    
+    def get_hitbox(self) -> pygame.Rect | None:
+        """攻撃判定のヒットボックスを返す"""
+        if self._finished or self._has_hit:
+            return None
+        
+        elapsed = int(self._elapsed_frames)
+        startup = int(self.startup_frames)
+        active = int(self.active_frames)
+        
+        # 発生前または持続終了後は判定なし
+        if elapsed < startup or elapsed >= (startup + active):
+            return None
+        
+        # ヒットボックスの位置を計算
+        x = int(self.pos[0]) + int(self.hitbox_offset_x)
+        y = int(self.pos[1]) + int(self.hitbox_offset_y)
+        
+        return pygame.Rect(
+            x - int(self.hitbox_width) // 2,
+            y - int(self.hitbox_height) // 2,
+            int(self.hitbox_width),
+            int(self.hitbox_height)
+        )
+    
+    def can_deal_damage(self) -> bool:
+        """ダメージを与えられる状態かチェック"""
+        return self.get_hitbox() is not None and not self._has_hit
+    
+    def register_hit(self) -> None:
+        """ヒット登録（多段ヒット防止）"""
+        self._has_hit = True
+    
+    def draw(self, surface: pygame.Surface, *, debug_draw: bool = False) -> None:
+        """エフェクトを描画（デバッグ時はヒットボックスも表示）"""
+        # 通常のエフェクト描画
+        super().draw(surface)
+        
+        # デバッグモード時はヒットボックスを描画
+        if debug_draw:
+            hitbox = self.get_hitbox()
+            if hitbox is not None:
+                # 赤い枠線でヒットボックスを表示
+                pygame.draw.rect(surface, (255, 0, 0), hitbox, 2)
+                # 半透明の赤い塗りつぶし
+                s = pygame.Surface((hitbox.width, hitbox.height), pygame.SRCALPHA)
+                s.fill((255, 0, 0, 80))
+                surface.blit(s, (hitbox.x, hitbox.y))
